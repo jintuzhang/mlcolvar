@@ -71,7 +71,9 @@ class QLinear(nn.Module):
         qw = self.qweight
         w = (qw.round() - qw).detach() + qw  # straight through estimator
         w = 2 ** self.e * w
-        return nn.functional.linear(input, w, self.bias)
+        return nn.functional.linear(
+            input, w, self.bias * self.b.relu().squeeze(-1)
+        )
 
     def extra_repr(self) -> str:
         return (
@@ -135,7 +137,7 @@ class QLinear(nn.Module):
             w = 2 ** self.e * w
             result.weight.copy_(w)
             if self.bias is not None:
-                result.bias.copy_(self.bias)
+                result.bias.copy_(self.bias * self.b.relu().squeeze(-1))
 
         result = result.train(self.training)
 
