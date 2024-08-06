@@ -150,6 +150,8 @@ class FeedForward(lightning.LightningModule):
             m = self.nn[indices[i]]
             self.nn[indices[i]] = m.freeze()
 
+        self.quantization = False
+
     # def extra_repr(self) -> str:
     #    repr = f"in_features={self.in_features}, out_features={self.out_features}"
     #    return repr
