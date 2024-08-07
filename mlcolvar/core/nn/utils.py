@@ -50,7 +50,7 @@ class QLinear(nn.Module):
             torch.full((out_features, 1), -4.0, **factory_kwargs)
         )
         self.b = nn.parameter.Parameter(
-            torch.full((out_features, 1), 3.0, **factory_kwargs)
+            torch.full((out_features, 1), 2.5, **factory_kwargs)
         )
         if bias:
             self.bias = nn.parameter.Parameter(
