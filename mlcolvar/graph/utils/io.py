@@ -153,7 +153,7 @@ def create_dataset_from_trajectories(
                 md.load(trajectories[i][j], top=top[i][j])
                 for j in range(len(trajectories[i]))
             ]
-            for t in traj:
+            for j,t in enumerate(traj):
                 t.top = md.core.trajectory.load_topology(top[i][j])
             if selection is not None:
                 for j in range(len(traj)):
