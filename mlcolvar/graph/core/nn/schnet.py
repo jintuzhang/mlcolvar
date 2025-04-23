@@ -2,6 +2,7 @@ import math
 import torch
 from torch import nn
 from torch_geometric.nn import MessagePassing
+from typing import Union
 
 """
 The SchNet components. This module is taken from the pgy package:
@@ -18,7 +19,7 @@ class InteractionBlock(nn.Module):
         num_gaussians: int,
         num_filters: int,
         cutoff: float,
-        aggr: str = 'mean'
+        aggr: Union[str, nn.Sequential] = 'mean'
     ) -> None:
         super().__init__()
         self.mlp = nn.Sequential(
@@ -69,7 +70,7 @@ class CFConv(MessagePassing):
         num_filters: int,
         network: nn.Sequential,
         cutoff: float,
-        aggr: str = 'mean'
+        aggr: Union[str, nn.Sequential] = 'mean'
     ) -> None:
         super().__init__(aggr=aggr)
         self.lin1 = nn.Linear(in_channels, num_filters, bias=False)

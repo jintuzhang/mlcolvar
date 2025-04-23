@@ -316,6 +316,16 @@ class SchNetModel(BaseModel):
             len(atomic_numbers), n_hidden_channels, bias=False
         )
 
+        if aggr in ['attention', 'attentional']:
+            self.gate = nn.Sequential(
+                nn.Linear(n_filters, n_filters // 2),
+                schnet.ShiftedSoftplus(),
+                nn.Linear(n_filters // 2, 1)
+            )
+            aggr = tg.nn.aggr.AttentionalAggregation(self.gate)
+        else:
+            self.gate = None
+
         self.layers = nn.ModuleList([
             schnet.InteractionBlock(
                 n_hidden_channels, n_bases, n_filters, cutoff, aggr
@@ -346,6 +356,12 @@ class SchNetModel(BaseModel):
         self.W_out[0].bias.data.fill_(0)
         nn.init.xavier_uniform_(self.W_out[2].weight)
         self.W_out[2].bias.data.fill_(0)
+
+        if self.gate:
+            nn.init.xavier_uniform_(self.gate[0].weight)
+            self.gate[0].bias.data.fill_(0)
+            nn.init.xavier_uniform_(self.gate[2].weight)
+            self.gate[2].bias.data.fill_(0)
 
     def forward(
         self, data: Dict[str, torch.Tensor], scatter_mean: bool = True
