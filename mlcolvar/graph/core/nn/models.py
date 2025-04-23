@@ -160,6 +160,7 @@ class GVPModel(BaseModel):
         activation: str = 'SiLU',
         basis_type: str = 'bessel',
         smooth: bool = False,
+        aggr: str = 'mean',
     ) -> None:
         super().__init__(
             n_out, cutoff, atomic_numbers, n_bases, n_polynomials, basis_type
@@ -195,6 +196,7 @@ class GVPModel(BaseModel):
                 activations=(eval(f'torch.nn.{activation}')(), None),
                 vector_gate=True,
                 cutoff=(cutoff if smooth else -1),
+                aggr=aggr,
             )
             for _ in range(n_layers)
         )
@@ -317,14 +319,14 @@ class SchNetModel(BaseModel):
         )
 
         if aggr in ['attention', 'attentional']:
-            self.gate = nn.Sequential(
+            self.attention_gate = nn.Sequential(
                 nn.Linear(n_filters, n_filters // 2),
                 schnet.ShiftedSoftplus(),
                 nn.Linear(n_filters // 2, 1)
             )
-            aggr = tg.nn.aggr.AttentionalAggregation(self.gate)
+            aggr = tg.nn.aggr.AttentionalAggregation(self.attention_gate)
         else:
-            self.gate = None
+            self.attention_gate = None
 
         self.layers = nn.ModuleList([
             schnet.InteractionBlock(
@@ -357,11 +359,11 @@ class SchNetModel(BaseModel):
         nn.init.xavier_uniform_(self.W_out[2].weight)
         self.W_out[2].bias.data.fill_(0)
 
-        if self.gate:
-            nn.init.xavier_uniform_(self.gate[0].weight)
-            self.gate[0].bias.data.fill_(0)
-            nn.init.xavier_uniform_(self.gate[2].weight)
-            self.gate[2].bias.data.fill_(0)
+        if self.attention_gate:
+            nn.init.xavier_uniform_(self.attention_gate[0].weight)
+            self.attention_gate[0].bias.data.fill_(0)
+            nn.init.xavier_uniform_(self.attention_gate[2].weight)
+            self.attention_gate[2].bias.data.fill_(0)
 
     def forward(
         self, data: Dict[str, torch.Tensor], scatter_mean: bool = True
