@@ -1,3 +1,4 @@
+import copy
 import torch
 import numpy as np
 from typing import Tuple
@@ -160,9 +161,18 @@ def create_timelagged_datasets(
     assert len(x_t) == len(x_lag)
     assert len(w_t) == len(w_lag)
 
-    # assign weights
-    dataset_t = dataset[x_t.numpy().tolist()]
-    dataset_lag = dataset[x_lag.numpy().tolist()]
+    # assign weights. need to avoid non-copy and overwriting of weights
+    if logweights is None:
+        dataset_t = dataset[x_t.numpy().tolist()]
+        dataset_lag = dataset[x_lag.numpy().tolist()]
+    else:
+        # TODO: this is memory inefficient. find a better way
+        dataset_t = [
+            copy.deepcopy(dataset[i]) for i in x_t.numpy().tolist()
+        ]
+        dataset_lag = [
+            copy.deepcopy(dataset[i]) for i in x_lag.numpy().tolist()
+        ]
 
     for i in range(len(x_t)):
         dataset_t[i]['weight'] = w_t[i]
@@ -183,22 +193,25 @@ def test_timelagged() -> None:
     node_labels = np.array([[0], [1], [1]])
     z_table = gdata.atomic.AtomicNumberTable.from_zs(numbers)
 
-    config = gdata.atomic.Configuration(
-        atomic_numbers=numbers,
-        positions=positions,
-        cell=cell,
-        pbc=[True] * 3,
-        node_labels=node_labels,
-        graph_labels=graph_labels,
-    )
+    config = [
+        gdata.atomic.Configuration(
+            atomic_numbers=numbers,
+            positions=positions + np.random.rand(*positions.shape),
+            cell=cell,
+            pbc=[True] * 3,
+            node_labels=node_labels,
+            graph_labels=graph_labels,
+        )
+        for _ in range(100)
+    ]
     dataset = gdata.create_dataset_from_configurations(
-        [config] * 10, z_table, 0.1, show_progress=False
+        config, z_table, 0.1, show_progress=False
     )
     for i in range(len(dataset)):
         dataset[i]['graph_labels'] *= i
 
     datasets = create_timelagged_datasets(dataset)
-    data_reference = _ctd(torch.arange(10))
+    data_reference = _ctd(torch.arange(100))
 
     assert len(datasets[0]) == len(data_reference['data'])
     assert len(datasets[1]) == len(data_reference['data_lag'])
@@ -209,15 +222,27 @@ def test_timelagged() -> None:
         w_ref = data_reference['weights']
         assert d_0[i]['weight'] == w_ref[i]
         assert d_0[i]['graph_labels'][0, 0] == d_ref[i]
+        assert (
+            d_0[i]['positions'] == dataset[d_ref[i].item()]['positions']
+        ).all()
+        assert (
+            d_0[i]['unit_shifts'] == dataset[d_ref[i].item()]['unit_shifts']
+        ).all()
     for i in range(len(datasets[1])):
         d_1 = datasets[1]
         d_ref = data_reference['data_lag']
         w_ref = data_reference['weights_lag']
         assert d_1[i]['weight'] == w_ref[i]
         assert d_1[i]['graph_labels'][0, 0] == d_ref[i]
+        assert (
+            d_1[i]['positions'] == dataset[d_ref[i].item()]['positions']
+        ).all()
+        assert (
+            d_1[i]['unit_shifts'] == dataset[d_ref[i].item()]['unit_shifts']
+        ).all()
 
     datasets = create_timelagged_datasets(dataset, lag_time=2)
-    data_reference = _ctd(torch.arange(10), lag_time=2)
+    data_reference = _ctd(torch.arange(100), lag_time=2)
 
     assert len(datasets[0]) == len(data_reference['data'])
     assert len(datasets[1]) == len(data_reference['data_lag'])
@@ -228,12 +253,54 @@ def test_timelagged() -> None:
         w_ref = data_reference['weights']
         assert d_0[i]['weight'] == w_ref[i]
         assert d_0[i]['graph_labels'][0, 0] == d_ref[i]
+        assert (
+            d_0[i]['positions'] == dataset[d_ref[i].item()]['positions']
+        ).all()
+        assert (
+            d_0[i]['unit_shifts'] == dataset[d_ref[i].item()]['unit_shifts']
+        ).all()
     for i in range(len(datasets[1])):
         d_1 = datasets[1]
         d_ref = data_reference['data_lag']
         w_ref = data_reference['weights_lag']
         assert d_1[i]['weight'] == w_ref[i]
         assert d_1[i]['graph_labels'][0, 0] == d_ref[i]
+        assert (
+            d_1[i]['positions'] == dataset[d_ref[i].item()]['positions']
+        ).all()
+        assert (
+            d_1[i]['unit_shifts'] == dataset[d_ref[i].item()]['unit_shifts']
+        ).all()
+
+    l_w = torch.tensor(range(100), dtype=float) / 100
+    datasets = create_timelagged_datasets(dataset, lag_time=2, logweights=l_w)
+    l_w = torch.tensor(range(100), dtype=float) / 100
+    data_reference = _ctd(torch.arange(100), lag_time=2, logweights=l_w)
+
+    for i in range(len(datasets[0])):
+        d_0 = datasets[0]
+        d_ref = data_reference['data']
+        w_ref = data_reference['weights']
+        assert d_0[i]['weight'] == w_ref[i]
+        assert d_0[i]['graph_labels'][0, 0] == d_ref[i]
+        assert (
+            d_0[i]['positions'] == dataset[d_ref[i].item()]['positions']
+        ).all()
+        assert (
+            d_0[i]['unit_shifts'] == dataset[d_ref[i].item()]['unit_shifts']
+        ).all()
+    for i in range(len(datasets[1])):
+        d_1 = datasets[1]
+        d_ref = data_reference['data_lag']
+        w_ref = data_reference['weights_lag']
+        assert d_1[i]['weight'] == w_ref[i]
+        assert d_1[i]['graph_labels'][0, 0] == d_ref[i]
+        assert (
+            d_1[i]['positions'] == dataset[d_ref[i].item()]['positions']
+        ).all()
+        assert (
+            d_1[i]['unit_shifts'] == dataset[d_ref[i].item()]['unit_shifts']
+        ).all()
 
 
 if __name__ == '__main__':
