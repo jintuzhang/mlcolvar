@@ -167,12 +167,16 @@ def create_timelagged_datasets(
         dataset_lag = dataset[x_lag.numpy().tolist()]
     else:
         # TODO: this is memory inefficient. find a better way
-        dataset_t = [
-            copy.deepcopy(dataset[i]) for i in x_t.numpy().tolist()
-        ]
-        dataset_lag = [
-            copy.deepcopy(dataset[i]) for i in x_lag.numpy().tolist()
-        ]
+        dataset_t = gdata.GraphDataSet(
+            [copy.deepcopy(dataset[i]) for i in x_t.numpy().tolist()],
+            dataset.atomic_numbers,
+            dataset.cutoff,
+        )
+        dataset_lag = gdata.GraphDataSet(
+            [copy.deepcopy(dataset[i]) for i in x_lag.numpy().tolist()],
+            dataset.atomic_numbers,
+            dataset.cutoff,
+        )
 
     for i in range(len(x_t)):
         dataset_t[i]['weight'] = w_t[i]
@@ -276,6 +280,35 @@ def test_timelagged() -> None:
     datasets = create_timelagged_datasets(dataset, lag_time=2, logweights=l_w)
     l_w = torch.tensor(range(100), dtype=float) / 100
     data_reference = _ctd(torch.arange(100), lag_time=2, logweights=l_w)
+
+    for i in range(len(datasets[0])):
+        d_0 = datasets[0]
+        d_ref = data_reference['data']
+        w_ref = data_reference['weights']
+        assert d_0[i]['weight'] == w_ref[i]
+        assert d_0[i]['graph_labels'][0, 0] == d_ref[i]
+        assert (
+            d_0[i]['positions'] == dataset[d_ref[i].item()]['positions']
+        ).all()
+        assert (
+            d_0[i]['unit_shifts'] == dataset[d_ref[i].item()]['unit_shifts']
+        ).all()
+    for i in range(len(datasets[1])):
+        d_1 = datasets[1]
+        d_ref = data_reference['data_lag']
+        w_ref = data_reference['weights_lag']
+        assert d_1[i]['weight'] == w_ref[i]
+        assert d_1[i]['graph_labels'][0, 0] == d_ref[i]
+        assert (
+            d_1[i]['positions'] == dataset[d_ref[i].item()]['positions']
+        ).all()
+        assert (
+            d_1[i]['unit_shifts'] == dataset[d_ref[i].item()]['unit_shifts']
+        ).all()
+
+    l_w = torch.ones(100, dtype=float)
+    datasets = create_timelagged_datasets(dataset, lag_time=2, logweights=l_w)
+    data_reference = _ctd(torch.arange(100), lag_time=2)
 
     for i in range(len(datasets[0])):
         d_0 = datasets[0]
