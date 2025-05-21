@@ -68,6 +68,7 @@ class GraphDeepTDA(GraphBaseCV):
         model_options: Dict[Any, Any] = {},
         extra_loss_options: Dict[Any, Any] = {'alpha': 1.0, 'beta': 100.0},
         optimizer_options: Dict[Any, Any] = {},
+        long_cutoff: float = None,
         **kwargs,
     ) -> None:
         if model_options.pop('n_out', None) is not None:
@@ -77,8 +78,10 @@ class GraphDeepTDA(GraphBaseCV):
         if optimizer_options != {}:
             kwargs['optimizer_options'] = optimizer_options
 
+        long_cutoff = long_cutoff if long_cutoff is not None else cutoff * 2
+
         super().__init__(
-            n_cvs, cutoff, atomic_numbers, model_name, model_options, **kwargs
+            n_cvs, cutoff, atomic_numbers, model_name, model_options, long_cutoff=long_cutoff, **kwargs
         )
 
         # check size and type of targets

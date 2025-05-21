@@ -3,7 +3,7 @@ import torch
 import math
 from torch import nn
 from torch_geometric.nn import MessagePassing
-from typing import Tuple, Callable, Optional, Union
+from typing import Tuple, Callable, Optional
 
 """
 The Geometric Vector Perceptron (GVP) layer. This module is taken from:
@@ -145,9 +145,9 @@ class GVPConv(MessagePassing):
         out_dims,
         edge_dims,
         n_layers=3,
-        aggr: Union[str, nn.Sequential] = 'mean',
+        aggr='mean',
         activations=(nn.functional.relu, torch.sigmoid),
-        vector_gate: bool = True,
+        vector_gate=True,
         cutoff: float = -1.0,
     ) -> None:
         super(GVPConv, self).__init__(aggr=aggr)
@@ -272,7 +272,6 @@ class GVPConvLayer(nn.Module):
         vector_gate=True,
         residual=True,
         cutoff: float = -1.0,
-        aggr: Union[str, nn.Sequential] = 'mean',
     ) -> None:
         super(GVPConvLayer, self).__init__()
         self.conv = GVPConv(
@@ -280,7 +279,7 @@ class GVPConvLayer(nn.Module):
             node_dims,
             edge_dims,
             n_message,
-            aggr=aggr,
+            aggr='mean',
             activations=activations,
             vector_gate=vector_gate,
             cutoff=cutoff,

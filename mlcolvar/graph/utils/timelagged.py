@@ -171,11 +171,13 @@ def create_timelagged_datasets(
             [copy.deepcopy(dataset[i]) for i in x_t.numpy().tolist()],
             dataset.atomic_numbers,
             dataset.cutoff,
+            dataset.long_cutoff,
         )
         dataset_lag = gdata.GraphDataSet(
             [copy.deepcopy(dataset[i]) for i in x_lag.numpy().tolist()],
             dataset.atomic_numbers,
             dataset.cutoff,
+            dataset.long_cutoff,
         )
 
     for i in range(len(x_t)):

@@ -16,15 +16,20 @@ def create_dataset_from_trajectories(
     trajectories: Union[List[List[str]], List[str], str],
     top: Union[List[List[str]], List[str], str],
     cutoff: float,
+    long_cutoff: float = None,
     buffer: float = 0.0,
     z_table: gdata.atomic.AtomicNumberTable = None,
+    load_args: list = None,
     folder: str = None,
     create_labels: bool = True,
     system_selection: str = None,
     environment_selection: str = None,
+    group1_selection: str = None,
+    group2_selection: str = None,
     return_trajectories: bool = False,
     remove_isolated_nodes: bool = True,
-    show_progress: bool = True
+    show_progress: bool = True,
+    save_names=True
 ) -> Union[
     gdata.GraphDataSet,
     Tuple[
@@ -109,6 +114,12 @@ def create_dataset_from_trajectories(
             'Not `environment_selection` given! Cannot define buffer size!'
         )
 
+    if (system_selection) is None and (group1_selection or group2_selection):
+        raise ValueError("the `group_selection` argument requires the `system_selection` argument to be defined")
+    
+    if long_cutoff is None:
+        long_cutoff = cutoff * 2
+    
     # fmt: off
     assert type(trajectories) is type(top), (
         'The `trajectories` and `top` parameters should have the same type!'
@@ -143,6 +154,13 @@ def create_dataset_from_trajectories(
                 top[i] = folder + '/' + top[i]
             assert isinstance(trajectories[i], str)
             assert isinstance(top[i], str)
+
+    # check if per file args are given, otherwise set to {}
+    if load_args is not None:
+        if (not isinstance(load_args, list)) or (len(trajectories) != len(load_args)):
+            raise TypeError(
+                "load_args should be a list of dictionaries of arguments of same length as trajectories. If you want to use the same args for all file pass them directly as **kwargs."
+            )
 
     topologies = []
     trajectories_in_memory = []
@@ -181,33 +199,55 @@ def create_dataset_from_trajectories(
     if z_table is None:
         z_table = _z_table_from_top(topologies)
 
+    if save_names:
+        atom_names = _names_from_top(topologies)
+    else:
+        atom_names = None
+
     configurations = []
     for i in range(len(trajectories_in_memory)):
         if isinstance(trajectories_in_memory[i], list):
             for j in range(len(trajectories_in_memory[i])):
                 configuration = _configures_from_trajectory(
-                    trajectories_in_memory[i][j],
-                    i if create_labels else -1,  # NOTE: all these configurations have a label `i`
-                    system_selection,
-                    environment_selection,
+                    trajectory=trajectories_in_memory[i][j],
+                    label=i if create_labels else -1,  # NOTE: all these configurations have a label `i`
+                    system_selection=system_selection,
+                    environment_selection=environment_selection,
+                    group1_selection=group1_selection,
+                    group2_selection=group2_selection,
+                    start=load_args[i][j]['start'] if load_args is not None else 0,
+                    stop=load_args[i][j]['stop']  if load_args is not None else None,
+                    stride=load_args[i][j]['stride']  if load_args is not None else 1,
                 )
                 configurations.extend(configuration)
         else:
             configuration = _configures_from_trajectory(
-                trajectories_in_memory[i],
-                i if create_labels else -1,
-                system_selection,
-                environment_selection,
+                trajectory=trajectories_in_memory[i],
+                label=i if create_labels else -1,
+                system_selection=system_selection,
+                environment_selection=environment_selection,
+                group1_selection=group1_selection,
+                group2_selection=group2_selection,
+                start=load_args[i]['start'] if load_args is not None else 0,
+                stop=load_args[i]['stop']  if load_args is not None else None,
+                stride=load_args[i]['stride']  if load_args is not None else 1,
             )
             configurations.extend(configuration)
+
+    if (group1_selection is not None):
+        double_cutoff = True
+    else:
+        double_cutoff = False
 
     dataset = gdata.create_dataset_from_configurations(
         configurations,
         z_table,
         cutoff,
+        long_cutoff,
         buffer,
         remove_isolated_nodes,
-        show_progress
+        show_progress,
+        double_cutoff,
     )
 
     if return_trajectories:
@@ -215,6 +255,15 @@ def create_dataset_from_trajectories(
     else:
         return dataset
 
+def _names_from_top(top: List[md.Topology] ):
+    it = iter(top)
+    atom_names = list(next(it).atoms)
+    if not all([atom_names == list(n.atoms) for n in it]):
+        raise ValueError(
+            "The atoms names or their order are different in the topology files. Check or deactivate save_names"
+        )
+    
+    return atom_names
 
 def _z_table_from_top(
     top: List[md.Topology]
@@ -240,6 +289,11 @@ def _configures_from_trajectory(
     label: int = None,
     system_selection: str = None,
     environment_selection: str = None,
+    group1_selection: str=None,
+    group2_selection: str=None,
+    start: int = 0,
+    stop: int = None,
+    stride: int = 1
 ) -> gdata.atomic.Configurations:
     """
     Create configurations from one trajectory.
@@ -262,6 +316,33 @@ def _configures_from_trajectory(
     if label is not None:
         label = np.array([[label]])
 
+    if system_selection is not None and group1_selection is not None:
+        system_atoms_ = trajectory.top.select(system_selection)
+        group1_atoms = trajectory.top.select(group1_selection)
+        assert all(atom in system_atoms_ for atom in group1_atoms), (
+            'Some atoms selected by group1_selection are not in the system_atoms: '
+            + '"{:s}"!'.format(group1_selection)
+        )
+        assert len(group1_atoms) > 0, (
+            'No atoms will be selected with `group1_selection`: '
+            + '"{:s}"!'.format(group1_selection)
+        )
+        if group2_selection is not None:
+            group2_atoms = trajectory.top.select(group2_selection)
+            assert all(atom in system_atoms_ for atom in group2_atoms), (
+                'Some atoms selected by group2_selection are not in the system_atoms: '
+                + '"{:s}"!'.format(group2_selection)
+            )
+            assert len(group2_atoms) > 0, (
+                'No atoms will be selected with `group2_selection`: '
+                + '"{:s}"!'.format(group2_selection)
+            )
+        else:
+            group2_atoms = None
+    else:
+        group1_atoms = None 
+        group2_atoms = None
+
     if system_selection is not None and environment_selection is not None:
         system_atoms = trajectory.top.select(system_selection)
         assert len(system_atoms) > 0, (
@@ -273,6 +354,7 @@ def _configures_from_trajectory(
             'No atoms will be selected with `environment_selection`: '
             + '"{:s}"!'.format(environment_selection)
         )
+
     else:
         system_atoms = None
         environment_atoms = None
@@ -285,8 +367,12 @@ def _configures_from_trajectory(
         pbc = [False] * 3
         cell = [None] * len(trajectory)
 
+    if stop is None:
+        stop = len(trajectory)
+
     configurations = []
-    for i in range(len(trajectory)):
+
+    for i in range(start,stop,stride):
         configuration = gdata.atomic.Configuration(
             atomic_numbers=atomic_numbers,
             positions=trajectory.xyz[i] * 10,
@@ -295,14 +381,16 @@ def _configures_from_trajectory(
             graph_labels=label,
             node_labels=None,  # TODO: Add supports for per-node labels.
             system=system_atoms,
-            environment=environment_atoms
+            environment=environment_atoms,
+            group1 = group1_atoms,
+            group2 = group2_atoms
         )
         configurations.append(configuration)
 
     return configurations
 
 
-def test_create_dataset_from_trajectories(
+def test_create_dataset_from_trajectories(   # TO DO
     text: str, system_selection: str
 ) -> None:
     with open('test_dataset.pdb', 'w') as fp:

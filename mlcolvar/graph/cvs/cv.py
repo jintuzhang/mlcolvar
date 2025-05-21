@@ -50,6 +50,7 @@ class GraphBaseCV(lightning.LightningModule):
                 'gamma': 0.9997
             }
         },
+        long_cutoff: float = None,
         *args,
         **kwargs,
     ) -> None:
@@ -58,6 +59,7 @@ class GraphBaseCV(lightning.LightningModule):
         """
         super().__init__(*args, **kwargs)
 
+        long_cutoff = long_cutoff if long_cutoff is not None else cutoff * 2
         self.register_buffer(
             'n_cvs', torch.tensor(n_cvs, dtype=torch.int64)
         )
@@ -67,8 +69,11 @@ class GraphBaseCV(lightning.LightningModule):
         self.register_buffer(
             'atomic_numbers', torch.tensor(atomic_numbers, dtype=torch.int64)
         )
+        self.register_buffer(
+            'long_cutoff', torch.tensor(long_cutoff, dtype=torch.get_default_dtype())
+        )
 
-        for key in ['cutoff', 'atomic_numbers']:
+        for key in ['cutoff', 'atomic_numbers', 'long_cutoff']:
             model_options.pop(key, None)
         # For DeepTICA
         n_out = model_options.pop('n_out', n_cvs)
@@ -78,6 +83,7 @@ class GraphBaseCV(lightning.LightningModule):
         self._model = eval(f'models.{model_name}')(
             n_out=n_out,
             cutoff=cutoff,
+            long_cutoff=long_cutoff,
             atomic_numbers=atomic_numbers,
             **model_options
         )
@@ -87,7 +93,7 @@ class GraphBaseCV(lightning.LightningModule):
         self.lr_scheduler_kwargs = {}
         self._parse_optimizer(optimizer_options)
 
-        self.save_hyperparameters(ignore=['n_cvs', 'cutoff', 'atomic_numbers'])
+        self.save_hyperparameters(ignore=['n_cvs', 'cutoff', 'atomic_numbers', 'long_cutoff'])
 
     def __setattr__(self, key, value) -> None:
         # PyTorch overrides __setattr__ to raise a TypeError when you try to

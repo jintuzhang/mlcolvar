@@ -128,5 +128,12 @@ def get_dataset_cv_gradients(
         )
         gradients = [g.cpu().numpy() for g in gradients]
         cv_value_gradients.extend(gradients)
-
-    return np.array(cv_value_gradients)
+        max_rows = max(g.shape[0] for g in cv_value_gradients)  
+        max_cols = max(g.shape[1] if g.ndim > 1 else 0 for g in cv_value_gradients)
+        
+        cv_value_gradients_padded = np.array([
+            np.pad(g, ((0, max_rows - g.shape[0]), (0, max_cols - g.shape[1])) if g.ndim > 1 else ((0, max_rows - g.shape[0]), (0, 0)))
+            for g in cv_value_gradients
+        ])
+        
+    return cv_value_gradients_padded

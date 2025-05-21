@@ -2,7 +2,6 @@ import math
 import torch
 from torch import nn
 from torch_geometric.nn import MessagePassing
-from typing import Union
 
 """
 The SchNet components. This module is taken from the pgy package:
@@ -19,7 +18,8 @@ class InteractionBlock(nn.Module):
         num_gaussians: int,
         num_filters: int,
         cutoff: float,
-        aggr: Union[str, nn.Sequential] = 'mean'
+        long_cutoff: float,
+        aggr: str = 'mean',
     ) -> None:
         super().__init__()
         self.mlp = nn.Sequential(
@@ -33,6 +33,7 @@ class InteractionBlock(nn.Module):
             num_filters,
             self.mlp,
             cutoff,
+            long_cutoff,
             aggr
         )
         self.act = ShiftedSoftplus()
@@ -55,8 +56,9 @@ class InteractionBlock(nn.Module):
         edge_index: torch.Tensor,
         edge_weight: torch.Tensor,
         edge_attr: torch.Tensor,
+        edge_labels: torch.Tensor,
     ) -> torch.Tensor:
-        x = self.conv(x, edge_index, edge_weight, edge_attr)
+        x = self.conv(x, edge_index, edge_weight, edge_attr, edge_labels)
         x = self.act(x)
         x = self.lin(x)
         return x
@@ -70,13 +72,15 @@ class CFConv(MessagePassing):
         num_filters: int,
         network: nn.Sequential,
         cutoff: float,
-        aggr: Union[str, nn.Sequential] = 'mean'
+        long_cutoff: float,
+        aggr: str = 'mean'
     ) -> None:
         super().__init__(aggr=aggr)
         self.lin1 = nn.Linear(in_channels, num_filters, bias=False)
         self.lin2 = nn.Linear(num_filters, out_channels)
         self.network = network
         self.cutoff = cutoff
+        self.long_cutoff = long_cutoff
 
         self.reset_parameters()
 
@@ -91,8 +95,13 @@ class CFConv(MessagePassing):
         edge_index: torch.Tensor,
         edge_weight: torch.Tensor,
         edge_attr: torch.Tensor,
+        edge_labels: torch.Tensor,
     ) -> torch.Tensor:
-        C = 0.5 * (torch.cos(edge_weight * math.pi / self.cutoff) + 1.0)
+        if self.long_cutoff is None:
+            self.long_cutoff =self.cutoff * 2
+        delta = self.long_cutoff - self.cutoff
+        cutoff = edge_labels * delta + self.cutoff
+        C = 0.5 * (torch.cos(edge_weight * math.pi / cutoff.view(-1,1)) + 1.0)
         W = self.network(edge_attr) * C.view(-1, 1)
 
         x = self.lin1(x)

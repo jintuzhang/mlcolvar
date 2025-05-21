@@ -1,5 +1,6 @@
 from . import atomic
 from . import neighborhood
+from . import subgroup
 from .dataset import (
     GraphDataSet,
     create_dataset_from_configurations,

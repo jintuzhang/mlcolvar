@@ -54,7 +54,6 @@ class GaussianBasis(torch.nn.Module):
 
         return result
 
-
 class BesselBasis(torch.nn.Module):
     """
     The Bessel radial basis functions (equation (7) in [1]).

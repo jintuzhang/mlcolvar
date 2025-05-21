@@ -75,6 +75,7 @@ class GraphDeepTICA(GraphBaseCV):
         model_options: Dict[Any, Any] = {'n_out': 6},
         extra_loss_options: Dict[Any, Any] = {'mode': 'sum2', 'n_eig': 0},
         optimizer_options: Dict[Any, Any] = {},
+        long_cutoff: float = None,
         **kwargs,
     ) -> None:
         if 'n_out' not in model_options.keys():
@@ -87,8 +88,10 @@ class GraphDeepTICA(GraphBaseCV):
         if optimizer_options != {}:
             kwargs['optimizer_options'] = optimizer_options
 
+        long_cutoff = long_cutoff if long_cutoff is not None else cutoff * 2
+
         super().__init__(
-            n_cvs, cutoff, atomic_numbers, model_name, model_options, **kwargs
+            n_cvs, cutoff, atomic_numbers, model_name, model_options, long_cutoff=long_cutoff, **kwargs
         )
 
         self.loss_fn = ReduceEigenvaluesLoss(**extra_loss_options)
