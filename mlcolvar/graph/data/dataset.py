@@ -264,8 +264,8 @@ def create_dataset_from_configurations(
     config: atomic.Configurations,
     z_table: atomic.AtomicNumberTable,
     cutoff: float,
-    cutoff_l: float = -1.0,
     buffer: float = 0.0,
+    cutoff_l: float = -1.0,
     remove_isolated_nodes: bool = False,
     show_progress: bool = True
 ) -> GraphDataSet:
@@ -280,10 +280,10 @@ def create_dataset_from_configurations(
         The atomic number table used to build the node attributes.
     cutoff: float
         The graph cutoff radius.
-    cutoff_l: float
-        The long graph cutoff radius.
     buffer: float
         Buffer size used in finding active environment atoms.
+    cutoff_l: float
+        The long graph cutoff radius.
     remove_isolated_nodes: bool
         If remove isolated nodes from the dataset.
     show_progress: bool

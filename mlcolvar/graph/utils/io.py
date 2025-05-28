@@ -1,6 +1,7 @@
 import torch
 import numpy as np
 import mdtraj as md
+import collections
 from typing import Union, List, Tuple
 
 from mlcolvar.graph import data as gdata
@@ -17,11 +18,13 @@ def create_dataset_from_trajectories(
     top: Union[List[List[str]], List[str], str],
     cutoff: float,
     buffer: float = 0.0,
+    cutoff_l: float = -1.0,
     z_table: gdata.atomic.AtomicNumberTable = None,
     folder: str = None,
     create_labels: bool = True,
     system_selection: str = None,
     environment_selection: str = None,
+    subsystem_selection: str = None,
     return_trajectories: bool = False,
     remove_isolated_nodes: bool = True,
     show_progress: bool = True
@@ -45,6 +48,9 @@ def create_dataset_from_trajectories(
         The graph cutoff radius.
     buffer: float
         Buffer size used in finding active environment atoms.
+    cutoff_l: float
+        The lone graph cutoff radius between subsystem atoms. This option
+        should be defined with the `subsystem_selection` option.
     z_table: mlcolvar.graph.data.atomic.AtomicNumberTable
         The atomic number table used to build the node attributes. If not
         given, it will be created from the given trajectories.
@@ -62,6 +68,11 @@ def create_dataset_from_trajectories(
         MDTraj style atom selections [1] of the environment atoms. If given,
         only the system atoms and [the environment atoms within the cutoff
         radius of the system atoms] will be kept in the graph.
+    subsystem_selection: str
+        MDTraj style atom selections of the subsystem atoms. If given, long
+        edges will be put between subsystem atoms. This option should be
+        defined along with the `cutoff_l` option. Besides, all atoms selected
+        by this option should also be selected by the `system_selection`.
     return_trajectories: bool
         If also return the loaded trajectory objects.
     remove_isolated_nodes: bool
@@ -106,8 +117,12 @@ def create_dataset_from_trajectories(
 
     if environment_selection is None:
         assert buffer == 0, (
-            'Not `environment_selection` given! Cannot define buffer size!'
+            'No `environment_selection` given! Cannot define buffer size!'
         )
+
+    assert not ((subsystem_selection is not None) ^ (cutoff_l > 0)), (
+        "`subsystem_selection` should appear with `cutoff_l`!"
+    )
 
     # fmt: off
     assert type(trajectories) is type(top), (
@@ -190,6 +205,7 @@ def create_dataset_from_trajectories(
                     i if create_labels else -1,  # NOTE: all these configurations have a label `i`
                     system_selection,
                     environment_selection,
+                    subsystem_selection,
                 )
                 configurations.extend(configuration)
         else:
@@ -198,6 +214,7 @@ def create_dataset_from_trajectories(
                 i if create_labels else -1,
                 system_selection,
                 environment_selection,
+                subsystem_selection,
             )
             configurations.extend(configuration)
 
@@ -206,6 +223,7 @@ def create_dataset_from_trajectories(
         z_table,
         cutoff,
         buffer,
+        cutoff_l,
         remove_isolated_nodes,
         show_progress
     )
@@ -240,6 +258,7 @@ def _configures_from_trajectory(
     label: int = None,
     system_selection: str = None,
     environment_selection: str = None,
+    subsystem_selection: str = None,
 ) -> gdata.atomic.Configurations:
     """
     Create configurations from one trajectory.
@@ -258,6 +277,9 @@ def _configures_from_trajectory(
         MDTraj style atom selections of the environment atoms. If given,
         only the system atoms and [the environment atoms within the cutoff
         radius of the system atoms] will be kept in the graph.
+    subsystem_selection: str
+        MDTraj style atom selections of the subsystem atoms. If given, long
+        edges will be put between subsystem atoms.
     """
     if label is not None:
         label = np.array([[label]])
@@ -277,6 +299,23 @@ def _configures_from_trajectory(
         system_atoms = None
         environment_atoms = None
 
+    if subsystem_selection is not None:
+        subsystem_atoms = trajectory.top.select(subsystem_selection)
+        assert len(subsystem_atoms) > 0, (
+            'No atoms will be selected with `subsystem_selection`: '
+            + '"{:s}"!'.format(subsystem_selection)
+        )
+        if system_selection is not None:
+            c_1 = collections.Counter(system_selection)
+            c_2 = collections.Counter(subsystem_selection)
+            assert c_1 >= c_2, (
+                "All atoms selected by `subsystem_selection` should also be "
+                + "selected by `system_selection`!"
+            )
+    else:
+        subsystem_atoms = None
+
+
     atomic_numbers = [a.element.number for a in trajectory.top.atoms]
     if trajectory.unitcell_vectors is not None:
         pbc = [True] * 3
@@ -295,7 +334,8 @@ def _configures_from_trajectory(
             graph_labels=label,
             node_labels=None,  # TODO: Add supports for per-node labels.
             system=system_atoms,
-            environment=environment_atoms
+            environment=environment_atoms,
+            subsystem=subsystem_atoms,
         )
         configurations.append(configuration)
 
