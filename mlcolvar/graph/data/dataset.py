@@ -237,8 +237,8 @@ def _create_dataset_from_configuration(
     if config.subsystem is not None:
         subsystem_masks = torch.zeros((one_hot.shape[0], 1), dtype=torch.bool)
         subsystem_masks[config.system, 0] = 1
-        edge_masks_le = torch.zeros((1, edge_index.shape[1]), dtype=torch.bool)
-        edge_masks_le[0, -edge_index_l.shape[1]:] = 1
+        edge_masks_le = torch.zeros((edge_index.shape[1], 1), dtype=torch.bool)
+        edge_masks_le[-edge_index_l.shape[1]:, 0] = 1
     else:
         subsystem_masks = None
         edge_masks_le = None
@@ -314,7 +314,7 @@ def create_dataset_from_configurations(
         for i in range(len(data_list)):
             data_list[i].cell = cell_list[i]
 
-    dataset = GraphDataSet(data_list, z_table.zs, cutoff)
+    dataset = GraphDataSet(data_list, z_table.zs, cutoff, cutoff_l)
 
     return dataset
 
@@ -631,10 +631,10 @@ def test_from_configuration_long_cutoff() -> None:
             [0.0, 1.0], [1.0, 0.0], [1.0, 0.0]
         ])
     ).all()
-    assert (data['edge_masks_le'] == torch.tensor([[0, 0, 0, 0, 1, 1]])).all()
+    assert (data['edge_masks_le'] == torch.tensor([[0]] * 4 + [[1]] * 2)).all()
     assert (data['node_labels'] == torch.tensor([[0.0], [1.0], [1.0]])).all()
     assert (data['graph_labels'] == torch.tensor([[1.0]])).all()
-    assert (data['edge_masks_le'] == torch.tensor([[0, 0, 0, 0, 1, 1]])).all()
+    assert (data['edge_masks_le'] == torch.tensor([[0]] * 4 + [[1]] * 2)).all()
     assert (data['system_masks'] == torch.tensor([[0], [1], [1]])).all()
     assert (data['subsystem_masks'] == torch.tensor([[0], [1], [1]])).all()
     assert data['weight'] == 1.0
@@ -658,7 +658,7 @@ def test_from_configuration_long_cutoff() -> None:
             [[0, 1, 1, 2, 0, 2], [1, 0, 2, 1, 2, 0]]
         )
     ).all()
-    assert (data['edge_masks_le'] == torch.tensor([[0, 0, 0, 0, 1, 1]])).all()
+    assert (data['edge_masks_le'] == torch.tensor([[0]] * 4 + [[1]] * 2)).all()
     assert (data['system_masks'] == torch.tensor([[1], [0], [1]])).all()
     assert (data['subsystem_masks'] == torch.tensor([[1], [0], [1]])).all()
 
@@ -719,7 +719,7 @@ def test_from_configuration_long_cutoff() -> None:
         ])
     ).all()
     assert (data['edge_masks_le'] == torch.tensor(
-        [[0, 0, 0, 0, 0, 0, 1, 1]]
+        [[0]] * 6 + [[1]] * 2
     )).all()
     assert (data['subsystem_masks'] == torch.tensor(
         [[1], [0], [0], [1], [0], [0]]
@@ -763,7 +763,7 @@ def test_from_configuration_long_cutoff() -> None:
         ])
     ).all()
     assert (data['edge_masks_le'] == torch.tensor(
-        [[0, 0, 0, 0, 0, 0, 0, 0, 1, 1]]
+        [[0]] * 8 + [[1]] * 2
     )).all()
 
 
@@ -947,7 +947,7 @@ def test_from_configurations_long_cutoff() -> None:
         ])
     ).all()
     assert (data['edge_masks_le'] == torch.tensor(
-        [[0, 0, 0, 0, 0, 0, 0, 0, 1, 1]]
+        [[0]] * 8 + [[1]] * 2
     )).all()
     data = create_dataset_from_configurations(
         [config],
@@ -987,7 +987,7 @@ def test_from_configurations_long_cutoff() -> None:
         ])
     ).all()
     assert (data['edge_masks_le'] == torch.tensor(
-        [[0, 0, 0, 0, 0, 0, 1, 1]]
+        [[0]] * 6 + [[1]] * 2
     )).all()
     assert (
         data['positions'] == torch.tensor([
