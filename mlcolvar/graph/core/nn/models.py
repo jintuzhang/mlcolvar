@@ -323,6 +323,8 @@ class SchNetModel(BaseModel):
         Type of the GNN aggr function.
     w_out_after_sum: bool
         If apply the readout MLP layer after the scatter sum.
+    basis_type: str
+        Type of the basis function.
 
     References
     ----------
@@ -343,11 +345,12 @@ class SchNetModel(BaseModel):
         n_hidden_channels: int = 16,
         drop_rate: int = 0,
         aggr: str = 'mean',
-        w_out_after_sum: bool = False
+        w_out_after_sum: bool = False,
+        basis_type: str = 'gaussian',
     ) -> None:
 
         super().__init__(
-            n_out, cutoff, atomic_numbers, cutoff_l, n_bases, 0, 'gaussian'
+            n_out, cutoff, atomic_numbers, cutoff_l, n_bases, 0, basis_type
         )
 
         self.W_v = nn.Linear(

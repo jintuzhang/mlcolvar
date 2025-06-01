@@ -321,18 +321,20 @@ class RadialEmbeddingBlock(torch.nn.Module):
             self.bessel_fn = BesselBasis(
                 cutoff=cutoff, cutoff_l=cutoff_l, n_bases=n_bases
             )
-            self.cutoff_fn = PolynomialCutoff(
-                cutoff=cutoff, cutoff_l=cutoff_l, p=n_polynomials
-            )
         elif basis_type == 'gaussian':
             self.bessel_fn = GaussianBasis(
                 cutoff=cutoff, cutoff_l=cutoff_l, n_bases=n_bases
             )
-            self.cutoff_fn = None
         else:
             raise RuntimeError(
                 'Unknown basis function type "{:s}" !'.format(basis_type)
             )
+        if n_polynomials > 0:
+            self.cutoff_fn = PolynomialCutoff(
+                cutoff=cutoff, cutoff_l=cutoff_l, p=n_polynomials
+            )
+        else:
+            self.cutoff_fn = None
 
     def forward(
         self,
@@ -549,7 +551,7 @@ def test_radial_embedding_block():
         [0.7453593045429805, 0.9731449630580510]
     ])
 
-    embedding = RadialEmbeddingBlock(6, 60, 2, 6, 'gaussian')
+    embedding = RadialEmbeddingBlock(6, 60, 2, 0, 'gaussian')
 
     index = torch.tensor([True, False] * 5)
     data_new = embedding(
