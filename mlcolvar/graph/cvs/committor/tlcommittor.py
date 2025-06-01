@@ -31,6 +31,8 @@ class GraphTimeLaggedCommittor(GraphBaseCV):
         `mlcolvar.graph.data.GraphDataSet` instance.
     atomic_masses : List[float]
         List of masses of all the atoms we are using.
+    cutoff_l: float
+        The lone graph cutoff radius between subsystem atoms.
     model_name: str
         Name of the GNN model.
     model_options: Dict[Any, Any]
@@ -61,6 +63,7 @@ class GraphTimeLaggedCommittor(GraphBaseCV):
         self,
         cutoff: float,
         atomic_numbers: List[int],
+        cutoff_l: float = -1.0,
         model_name: str = 'GVPModel',
         model_options: Dict[Any, Any] = {},
         extra_loss_options: Dict[Any, Any] = {
@@ -79,7 +82,13 @@ class GraphTimeLaggedCommittor(GraphBaseCV):
             kwargs['optimizer_options'] = optimizer_options
 
         super().__init__(
-            2, cutoff, atomic_numbers, model_name, model_options, **kwargs
+            2,
+            cutoff,
+            atomic_numbers,
+            cutoff_l,
+            model_name,
+            model_options,
+            **kwargs
         )
 
         self._alpha = extra_loss_options.get('alpha', 10000.0)

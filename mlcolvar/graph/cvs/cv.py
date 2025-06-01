@@ -28,6 +28,8 @@ class GraphBaseCV(lightning.LightningModule):
     atomic_numbers: List[int]
         The atomic numbers mapping, e.g. the `atomic_numbers` attribute of a
         `mlcolvar.graph.data.GraphDataSet` instance.
+    cutoff_l: float
+        The lone graph cutoff radius between subsystem atoms.
     model_name: str
         Name of the GNN model.
     model_options: Dict[Any, Any]
@@ -41,7 +43,8 @@ class GraphBaseCV(lightning.LightningModule):
         n_cvs: int,
         cutoff: float,
         atomic_numbers: List[int],
-        model_name: str,
+        cutoff_l: float = -1.0,
+        model_name: str = 'GVPModel',
         model_options: Dict[Any, Any] = {},
         optimizer_options: Dict[Any, Any] = {
             'optimizer': {'lr': 1E-3, 'weight_decay': 1E-4},
@@ -58,11 +61,18 @@ class GraphBaseCV(lightning.LightningModule):
         """
         super().__init__(*args, **kwargs)
 
+        assert (cutoff_l < 0) or (cutoff_l > cutoff), (
+            "The long cutoff should be longer than the regular cutoff!"
+        )
+
         self.register_buffer(
             'n_cvs', torch.tensor(n_cvs, dtype=torch.int64)
         )
         self.register_buffer(
             'cutoff', torch.tensor(cutoff, dtype=torch.get_default_dtype())
+        )
+        self.register_buffer(
+            'cutoff_l', torch.tensor(cutoff, dtype=torch.get_default_dtype())
         )
         self.register_buffer(
             'atomic_numbers', torch.tensor(atomic_numbers, dtype=torch.int64)
@@ -79,6 +89,7 @@ class GraphBaseCV(lightning.LightningModule):
             n_out=n_out,
             cutoff=cutoff,
             atomic_numbers=atomic_numbers,
+            cutoff_l=cutoff_l,
             **model_options
         )
 
@@ -286,7 +297,7 @@ def test_base_cv() -> None:
     dtype = torch.get_default_dtype()
     torch.set_default_dtype(torch.float64)
 
-    cv = GraphBaseCV(2, 0.1, [1, 2, 3], 'GVPModel')
+    cv = GraphBaseCV(2, 0.1, [1, 2, 3], -1, 'GVPModel')
 
     assert cv.n_cvs == 2
     assert (cv.cutoff - 0.1) < 1E-12
@@ -323,6 +334,7 @@ def test_base_cv() -> None:
         2,
         0.1,
         [1, 2, 3],
+        -1,
         'GVPModel',
         optimizer_options={
             'optimizer': {'lr': 2E-3, 'weight_decay': 1E-4},

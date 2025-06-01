@@ -31,6 +31,8 @@ class BaseModel(nn.Module):
     atomic_numbers: List[int]
         The atomic numbers mapping, e.g. the `atomic_numbers` attribute of a
         `mlcolvar.graph.data.GraphDataSet` instance.
+    cutoff_l: float
+        The lone graph cutoff radius between subsystem atoms.
     n_bases: int
         Size of the basis set.
     n_polynomials: bool
@@ -44,6 +46,7 @@ class BaseModel(nn.Module):
         n_out: int,
         cutoff: float,
         atomic_numbers: List[int],
+        cutoff_l: float = -1.0,
         n_bases: int = 6,
         n_polynomials: int = 6,
         basis_type: str = 'bessel'
@@ -51,13 +54,21 @@ class BaseModel(nn.Module):
         super().__init__()
         self._n_out = n_out
         self._radial_embedding = radial.RadialEmbeddingBlock(
-            cutoff, n_bases, n_polynomials, basis_type
+            cutoff, cutoff_l, n_bases, n_polynomials, basis_type
         )
+
+        assert (cutoff_l < 0) or (cutoff_l > cutoff), (
+            "The long cutoff should be longer than the regular cutoff!"
+        )
+
         self.register_buffer(
             'n_out', torch.tensor(n_out, dtype=torch.int64)
         )
         self.register_buffer(
             'cutoff', torch.tensor(cutoff, dtype=torch.get_default_dtype())
+        )
+        self.register_buffer(
+            'cutoff_l', torch.tensor(cutoff_l, dtype=torch.get_default_dtype())
         )
         self.register_buffer(
             'atomic_numbers', torch.tensor(atomic_numbers, dtype=torch.int64)
@@ -92,7 +103,14 @@ class BaseModel(nn.Module):
             shifts=data['shifts'],
             normalize=normalize,
         )
-        return lengths, self._radial_embedding(lengths), vectors
+        return (
+            lengths,
+            self._radial_embedding(lengths, (
+                None if 'edge_masks_le' not in data.keys()
+                else data['edge_masks_le']
+            )),
+            vectors,
+        )
 
 
 class GVPModel(BaseModel):
@@ -109,6 +127,8 @@ class GVPModel(BaseModel):
     atomic_numbers: List[int]
         The atomic numbers mapping, e.g. the `atomic_numbers` attribute of a
         `mlcolvar.graph.data.GraphDataSet` instance.
+    cutoff_l: float
+        The lone graph cutoff radius between subsystem atoms.
     n_bases: int
         Size of the basis set.
     n_polynomials: bool
@@ -148,6 +168,7 @@ class GVPModel(BaseModel):
         n_out: int,
         cutoff: float,
         atomic_numbers: List[int],
+        cutoff_l: float = -1.0,
         n_bases: int = 8,
         n_polynomials: int = 6,
         n_layers: int = 1,
@@ -163,8 +184,20 @@ class GVPModel(BaseModel):
         aggr: str = 'mean',
     ) -> None:
         super().__init__(
-            n_out, cutoff, atomic_numbers, n_bases, n_polynomials, basis_type
+            n_out,
+            cutoff,
+            atomic_numbers,
+            cutoff_l,
+            n_bases,
+            n_polynomials,
+            basis_type,
         )
+
+        # TODO: dual cutoff for GVP.
+        if cutoff_l > 0:
+            raise NotImplementedError(
+                'Dual cutoff for GVP is not implemented!'
+            )
 
         self.W_e = nn.ModuleList([
             gvp_layer.LayerNorm((n_bases, 1)),
@@ -276,6 +309,8 @@ class SchNetModel(BaseModel):
     atomic_numbers: List[int]
         The atomic numbers mapping, e.g. the `atomic_numbers` attribute of a
         `mlcolvar.graph.data.GraphDataSet` instance.
+    cutoff_l: float
+        The lone graph cutoff radius between subsystem atoms.
     n_bases: int
         Size of the basis set.
     n_layers: int
@@ -301,6 +336,7 @@ class SchNetModel(BaseModel):
         n_out: int,
         cutoff: float,
         atomic_numbers: List[int],
+        cutoff_l: float = -1.0,
         n_bases: int = 16,
         n_layers: int = 2,
         n_filters: int = 16,
@@ -311,7 +347,7 @@ class SchNetModel(BaseModel):
     ) -> None:
 
         super().__init__(
-            n_out, cutoff, atomic_numbers, n_bases, 0, 'gaussian'
+            n_out, cutoff, atomic_numbers, cutoff_l, n_bases, 0, 'gaussian'
         )
 
         self.W_v = nn.Linear(
@@ -330,7 +366,7 @@ class SchNetModel(BaseModel):
 
         self.layers = nn.ModuleList([
             schnet.InteractionBlock(
-                n_hidden_channels, n_bases, n_filters, cutoff, aggr
+                n_hidden_channels, n_bases, n_filters, cutoff, cutoff_l, aggr
             )
             for _ in range(n_layers)
         ])
@@ -386,7 +422,16 @@ class SchNetModel(BaseModel):
         batch_id = data['batch']
 
         for layer in self.layers:
-            h_V = h_V + layer(h_V, data['edge_index'], h_E[0], h_E[1])
+            h_V = h_V + layer(
+                h_V,
+                data['edge_index'],
+                h_E[0],
+                h_E[1],
+                (
+                    None if 'edge_masks_le' not in data.keys()
+                    else data['edge_masks_le']
+                )
+            )
 
         if not self._w_out_after_sum:
             for w in self.W_out:
