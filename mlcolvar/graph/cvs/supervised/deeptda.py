@@ -190,7 +190,8 @@ def test_deep_tda():
             'n_scalars_edge': 16,
             'drop_rate': 0,
             'activation': 'SiLU',
-        }
+        },
+        extra_loss_options={'alpha': 1.0, 'beta': 100.0, 'gamma': 0.0}
     )
 
     data = test_get_data()
