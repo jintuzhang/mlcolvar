@@ -72,7 +72,7 @@ class GraphBaseCV(lightning.LightningModule):
             'cutoff', torch.tensor(cutoff, dtype=torch.get_default_dtype())
         )
         self.register_buffer(
-            'cutoff_l', torch.tensor(cutoff, dtype=torch.get_default_dtype())
+            'cutoff_l', torch.tensor(cutoff_l, dtype=torch.get_default_dtype())
         )
         self.register_buffer(
             'atomic_numbers', torch.tensor(atomic_numbers, dtype=torch.int64)
