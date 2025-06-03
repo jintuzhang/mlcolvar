@@ -163,6 +163,7 @@ class GVPModel(BaseModel):
            "Equivariant graph neural networks for 3d macromolecular structure."
            arXiv preprint arXiv:2106.03843 (2021).
     """
+
     def __init__(
         self,
         n_out: int,
@@ -193,11 +194,9 @@ class GVPModel(BaseModel):
             basis_type,
         )
 
-        # TODO: dual cutoff for GVP.
-        if cutoff_l > 0:
-            raise NotImplementedError(
-                'Dual cutoff for GVP is not implemented!'
-            )
+        assert (cutoff_l < 0) or smooth, (
+            "The long cutoff requires the `smooth` parameter defined!"
+        )
 
         self.W_e = nn.ModuleList([
             gvp_layer.LayerNorm((n_bases, 1)),
@@ -229,6 +228,7 @@ class GVPModel(BaseModel):
                 activations=(eval(f'torch.nn.{activation}')(), None),
                 vector_gate=True,
                 cutoff=(cutoff if smooth else -1),
+                cutoff_l=(cutoff_l if smooth else -1),
                 aggr=aggr,
             )
             for _ in range(n_layers)
@@ -277,7 +277,17 @@ class GVPModel(BaseModel):
         batch_id = data['batch']
 
         for layer in self.layers:
-            h_V = layer(h_V, data['edge_index'], h_E, lengths)
+            h_V = layer(
+                h_V,
+                data['edge_index'],
+                h_E,
+                lengths,
+                None,
+                (
+                    None if 'edge_masks_le' not in data.keys()
+                    else data['edge_masks_le']
+                )
+            )
 
         for w in self.W_out:
             h_V = w(h_V)
