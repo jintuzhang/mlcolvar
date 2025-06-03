@@ -7,8 +7,6 @@ __all__ = [
     "RegressionCV",
     "MultiTaskCV",
     'Committor',
-    "Generator",
-    "Generator_singleNN"
 ]
 
 from .cv import BaseCV
@@ -17,4 +15,3 @@ from .supervised import *
 from .timelagged import *
 from .multitask import *
 from .committor import *
-from .generator import *
