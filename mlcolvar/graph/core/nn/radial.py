@@ -54,6 +54,9 @@ class GaussianBasis(torch.nn.Module):
                 torch.tensor(coeff_l, dtype=torch.get_default_dtype())
             )
             self.register_buffer('offset_l', offset_l)
+        else:
+            self.register_buffer('coeff_l', torch.zeros((1, 1)))
+            self.register_buffer('offset_l', torch.zeros((1, 1)))
 
         self.register_buffer(
             'cutoff',
@@ -167,6 +170,9 @@ class BesselBasis(torch.nn.Module):
                     np.sqrt(2.0 / cutoff_l), dtype=torch.get_default_dtype()
                 )
             )
+        else:
+            self.register_buffer('bessel_weights_l', torch.zeros(1))
+            self.register_buffer('prefactor_l', torch.zeros(1))
 
         self.register_buffer(
             'cutoff', torch.tensor(cutoff, dtype=torch.get_default_dtype())
