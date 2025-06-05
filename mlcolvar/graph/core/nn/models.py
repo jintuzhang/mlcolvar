@@ -543,6 +543,48 @@ def test_gvp() -> None:
     ).all()
 
 
+def test_gvp_1() -> None:
+    torch.manual_seed(0)
+    torch_tools.set_default_dtype('float64')
+
+    model = GVPModel(
+        n_out=2,
+        cutoff=0.1,
+        cutoff_l=0.2,
+        atomic_numbers=[1, 8],
+        n_bases=6,
+        n_polynomials=6,
+        n_layers=2,
+        n_messages=2,
+        n_feedforwards=1,
+        n_scalars_node=16,
+        n_vectors_node=8,
+        n_scalars_edge=16,
+        drop_rate=0,
+        activation='SiLU',
+        smooth=True,
+    )
+
+    data = test_get_data().to_dict()
+    data['edge_masks_le'] = torch.zeros(
+        ((data['edge_index'].shape[1]), 1), dtype=bool
+    )
+    data['edge_masks_le'][:-2] = True
+    assert (
+        torch.abs(
+            model(data) -
+            torch.tensor([
+                [0.6782549308530665, -0.14335551625226037],
+                [0.6782549308530665, -0.14335551625226037],
+                [0.6782549308530665, -0.14335551625226037],
+                [0.6782549308530665, -0.14335551625226037],
+                [0.6782549308530665, -0.14335551625226037],
+                [0.6918278001458904, -0.11675286094651467],
+            ])
+        ) < 1E-12
+    ).all()
+
+
 def test_schnet_1() -> None:
     torch.manual_seed(0)
     torch_tools.set_default_dtype('float64')
@@ -591,7 +633,45 @@ def test_schnet_2() -> None:
     ).all()
 
 
+def test_schnet_3() -> None:
+    torch.manual_seed(0)
+    torch_tools.set_default_dtype('float64')
+
+    model = SchNetModel(
+        n_out=2,
+        cutoff=0.1,
+        cutoff_l=0.2,
+        atomic_numbers=[1, 8],
+        n_bases=6,
+        n_layers=2,
+        n_filters=16,
+        n_hidden_channels=16,
+        aggr='attention',
+    )
+
+    data = test_get_data().to_dict()
+    data['edge_masks_le'] = torch.zeros(
+        ((data['edge_index'].shape[1]), 1), dtype=bool
+    )
+    data['edge_masks_le'][:-2] = True
+    assert (
+        torch.abs(
+            model(data) -
+            torch.tensor([
+                [-0.057877079115427730, 0.03033736463546577],
+                [-0.057877079115427730, 0.03033736463546577],
+                [-0.057877079115427730, 0.03033736463546577],
+                [-0.057877079115427730, 0.03033736463546577],
+                [-0.057877079115427730, 0.03033736463546577],
+                [-0.057687594332204016, 0.01610545549363238],
+            ])
+        ) < 1E-12
+    ).all()
+
+
 if __name__ == '__main__':
     test_gvp()
+    test_gvp_1()
     test_schnet_1()
     test_schnet_2()
+    test_schnet_3()
