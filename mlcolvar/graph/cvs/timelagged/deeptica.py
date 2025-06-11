@@ -37,8 +37,8 @@ class GraphDeepTICA(GraphBaseCV):
     atomic_numbers: List[int]
         The atomic numbers mapping, e.g. the `atomic_numbers` attribute of a
         `mlcolvar.graph.data.GraphDataSet` instance.
-    n_cvs : int
-        Number of collective variables to be trained
+    cutoff_l: float
+        The lone graph cutoff radius between subsystem atoms.
     model_name: str
         Name of the GNN model.
     model_options: Dict[Any, Any]
@@ -71,6 +71,7 @@ class GraphDeepTICA(GraphBaseCV):
         n_cvs: int,
         cutoff: float,
         atomic_numbers: List[int],
+        cutoff_l: float = -1.0,
         model_name: str = 'GVPModel',
         model_options: Dict[Any, Any] = {'n_out': 6},
         extra_loss_options: Dict[Any, Any] = {'mode': 'sum2', 'n_eig': 0},
@@ -88,7 +89,13 @@ class GraphDeepTICA(GraphBaseCV):
             kwargs['optimizer_options'] = optimizer_options
 
         super().__init__(
-            n_cvs, cutoff, atomic_numbers, model_name, model_options, **kwargs
+            n_cvs,
+            cutoff,
+            atomic_numbers,
+            cutoff_l,
+            model_name,
+            model_options,
+            **kwargs
         )
 
         self.loss_fn = ReduceEigenvaluesLoss(**extra_loss_options)

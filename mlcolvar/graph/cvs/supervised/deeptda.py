@@ -36,6 +36,8 @@ class GraphDeepTDA(GraphBaseCV):
         Centers of the Gaussian targets
     target_sigmas : list
         Standard deviations of the Gaussian targets
+    cutoff_l: float
+        The lone graph cutoff radius between subsystem atoms.
     model_name: str
         Name of the GNN model.
     model_options: Dict[Any, Any]
@@ -64,9 +66,12 @@ class GraphDeepTDA(GraphBaseCV):
         atomic_numbers: List[int],
         target_centers: Union[List[float], List[List[float]]],
         target_sigmas: Union[List[float], List[List[float]]],
+        cutoff_l: float = -1.0,
         model_name: str = 'GVPModel',
         model_options: Dict[Any, Any] = {},
-        extra_loss_options: Dict[Any, Any] = {'alpha': 1.0, 'beta': 100.0},
+        extra_loss_options: Dict[Any, Any] = {
+            'alpha': 1.0, 'beta': 100.0, 'gamma': 50.0,
+        },
         optimizer_options: Dict[Any, Any] = {},
         **kwargs,
     ) -> None:
@@ -78,7 +83,13 @@ class GraphDeepTDA(GraphBaseCV):
             kwargs['optimizer_options'] = optimizer_options
 
         super().__init__(
-            n_cvs, cutoff, atomic_numbers, model_name, model_options, **kwargs
+            n_cvs,
+            cutoff,
+            atomic_numbers,
+            cutoff_l,
+            model_name,
+            model_options,
+            **kwargs
         )
 
         # check size and type of targets
@@ -112,6 +123,7 @@ class GraphDeepTDA(GraphBaseCV):
         elif len(target_centers.shape) > 2:
             raise ValueError('Too much target_centers dimensions!')
 
+        self._gamma = extra_loss_options.pop('gamma', 50.0)
         self.loss_fn = TDALoss(
             n_states=target_centers.shape[0],
             target_centers=target_centers,
@@ -138,10 +150,22 @@ class GraphDeepTDA(GraphBaseCV):
             return_loss_terms=True
         )
 
+        if self.n_cvs > 1:
+            mean = output.mean(dim=0, keepdim=True)
+            cov = output.T @ output / output.shape[0] - mean.T @ mean
+            loss_ortho = torch.trace(
+                (torch.eye(output.shape[1], device=output.device) - cov).T
+                @ (torch.eye(output.shape[1], device=output.device) - cov)
+            ) * self._gamma
+            loss += loss_ortho
+        else:
+            loss_ortho = 0.0
+
         name = 'train' if self.training else 'valid'
         self.log(f'{name}_loss', loss, on_epoch=True)
         self.log(f'{name}_loss_centers', loss_centers, on_epoch=True)
         self.log(f'{name}_loss_sigmas', loss_sigmas, on_epoch=True)
+        self.log(f'{name}_loss_ortho', loss_ortho, on_epoch=True)
         return loss
 
 
@@ -166,7 +190,8 @@ def test_deep_tda():
             'n_scalars_edge': 16,
             'drop_rate': 0,
             'activation': 'SiLU',
-        }
+        },
+        extra_loss_options={'alpha': 1.0, 'beta': 100.0, 'gamma': 0.0}
     )
 
     data = test_get_data()

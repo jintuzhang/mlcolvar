@@ -31,6 +31,8 @@ class BaseModel(nn.Module):
     atomic_numbers: List[int]
         The atomic numbers mapping, e.g. the `atomic_numbers` attribute of a
         `mlcolvar.graph.data.GraphDataSet` instance.
+    cutoff_l: float
+        The lone graph cutoff radius between subsystem atoms.
     n_bases: int
         Size of the basis set.
     n_polynomials: bool
@@ -44,6 +46,7 @@ class BaseModel(nn.Module):
         n_out: int,
         cutoff: float,
         atomic_numbers: List[int],
+        cutoff_l: float = -1.0,
         n_bases: int = 6,
         n_polynomials: int = 6,
         basis_type: str = 'bessel'
@@ -51,13 +54,21 @@ class BaseModel(nn.Module):
         super().__init__()
         self._n_out = n_out
         self._radial_embedding = radial.RadialEmbeddingBlock(
-            cutoff, n_bases, n_polynomials, basis_type
+            cutoff, cutoff_l, n_bases, n_polynomials, basis_type
         )
+
+        assert (cutoff_l < 0) or (cutoff_l > cutoff), (
+            "The long cutoff should be longer than the regular cutoff!"
+        )
+
         self.register_buffer(
             'n_out', torch.tensor(n_out, dtype=torch.int64)
         )
         self.register_buffer(
             'cutoff', torch.tensor(cutoff, dtype=torch.get_default_dtype())
+        )
+        self.register_buffer(
+            'cutoff_l', torch.tensor(cutoff_l, dtype=torch.get_default_dtype())
         )
         self.register_buffer(
             'atomic_numbers', torch.tensor(atomic_numbers, dtype=torch.int64)
@@ -92,7 +103,14 @@ class BaseModel(nn.Module):
             shifts=data['shifts'],
             normalize=normalize,
         )
-        return lengths, self._radial_embedding(lengths), vectors
+        return (
+            lengths,
+            self._radial_embedding(lengths, (
+                None if 'edge_masks_le' not in data.keys()
+                else data['edge_masks_le']
+            )),
+            vectors,
+        )
 
 
 class GVPModel(BaseModel):
@@ -109,6 +127,8 @@ class GVPModel(BaseModel):
     atomic_numbers: List[int]
         The atomic numbers mapping, e.g. the `atomic_numbers` attribute of a
         `mlcolvar.graph.data.GraphDataSet` instance.
+    cutoff_l: float
+        The lone graph cutoff radius between subsystem atoms.
     n_bases: int
         Size of the basis set.
     n_polynomials: bool
@@ -143,11 +163,13 @@ class GVPModel(BaseModel):
            "Equivariant graph neural networks for 3d macromolecular structure."
            arXiv preprint arXiv:2106.03843 (2021).
     """
+
     def __init__(
         self,
         n_out: int,
         cutoff: float,
         atomic_numbers: List[int],
+        cutoff_l: float = -1.0,
         n_bases: int = 8,
         n_polynomials: int = 6,
         n_layers: int = 1,
@@ -163,7 +185,17 @@ class GVPModel(BaseModel):
         aggr: str = 'mean',
     ) -> None:
         super().__init__(
-            n_out, cutoff, atomic_numbers, n_bases, n_polynomials, basis_type
+            n_out,
+            cutoff,
+            atomic_numbers,
+            cutoff_l,
+            n_bases,
+            n_polynomials,
+            basis_type,
+        )
+
+        assert (cutoff_l < 0) or smooth, (
+            "The long cutoff requires the `smooth` parameter defined!"
         )
 
         self.W_e = nn.ModuleList([
@@ -196,6 +228,7 @@ class GVPModel(BaseModel):
                 activations=(eval(f'torch.nn.{activation}')(), None),
                 vector_gate=True,
                 cutoff=(cutoff if smooth else -1),
+                cutoff_l=(cutoff_l if smooth else -1),
                 aggr=aggr,
             )
             for _ in range(n_layers)
@@ -244,7 +277,17 @@ class GVPModel(BaseModel):
         batch_id = data['batch']
 
         for layer in self.layers:
-            h_V = layer(h_V, data['edge_index'], h_E, lengths)
+            h_V = layer(
+                h_V,
+                data['edge_index'],
+                h_E,
+                lengths,
+                None,
+                (
+                    None if 'edge_masks_le' not in data.keys()
+                    else data['edge_masks_le']
+                )
+            )
 
         for w in self.W_out:
             h_V = w(h_V)
@@ -276,6 +319,8 @@ class SchNetModel(BaseModel):
     atomic_numbers: List[int]
         The atomic numbers mapping, e.g. the `atomic_numbers` attribute of a
         `mlcolvar.graph.data.GraphDataSet` instance.
+    cutoff_l: float
+        The lone graph cutoff radius between subsystem atoms.
     n_bases: int
         Size of the basis set.
     n_layers: int
@@ -288,6 +333,8 @@ class SchNetModel(BaseModel):
         Type of the GNN aggr function.
     w_out_after_sum: bool
         If apply the readout MLP layer after the scatter sum.
+    basis_type: str
+        Type of the basis function.
 
     References
     ----------
@@ -301,17 +348,19 @@ class SchNetModel(BaseModel):
         n_out: int,
         cutoff: float,
         atomic_numbers: List[int],
+        cutoff_l: float = -1.0,
         n_bases: int = 16,
         n_layers: int = 2,
         n_filters: int = 16,
         n_hidden_channels: int = 16,
         drop_rate: int = 0,
         aggr: str = 'mean',
-        w_out_after_sum: bool = False
+        w_out_after_sum: bool = False,
+        basis_type: str = 'gaussian',
     ) -> None:
 
         super().__init__(
-            n_out, cutoff, atomic_numbers, n_bases, 0, 'gaussian'
+            n_out, cutoff, atomic_numbers, cutoff_l, n_bases, 0, basis_type
         )
 
         self.W_v = nn.Linear(
@@ -330,7 +379,7 @@ class SchNetModel(BaseModel):
 
         self.layers = nn.ModuleList([
             schnet.InteractionBlock(
-                n_hidden_channels, n_bases, n_filters, cutoff, aggr
+                n_hidden_channels, n_bases, n_filters, cutoff, cutoff_l, aggr
             )
             for _ in range(n_layers)
         ])
@@ -386,7 +435,16 @@ class SchNetModel(BaseModel):
         batch_id = data['batch']
 
         for layer in self.layers:
-            h_V = h_V + layer(h_V, data['edge_index'], h_E[0], h_E[1])
+            h_V = h_V + layer(
+                h_V,
+                data['edge_index'],
+                h_E[0],
+                h_E[1],
+                (
+                    None if 'edge_masks_le' not in data.keys()
+                    else data['edge_masks_le']
+                )
+            )
 
         if not self._w_out_after_sum:
             for w in self.W_out:
@@ -485,6 +543,48 @@ def test_gvp() -> None:
     ).all()
 
 
+def test_gvp_1() -> None:
+    torch.manual_seed(0)
+    torch_tools.set_default_dtype('float64')
+
+    model = GVPModel(
+        n_out=2,
+        cutoff=0.1,
+        cutoff_l=0.2,
+        atomic_numbers=[1, 8],
+        n_bases=6,
+        n_polynomials=6,
+        n_layers=2,
+        n_messages=2,
+        n_feedforwards=1,
+        n_scalars_node=16,
+        n_vectors_node=8,
+        n_scalars_edge=16,
+        drop_rate=0,
+        activation='SiLU',
+        smooth=True,
+    )
+
+    data = test_get_data().to_dict()
+    data['edge_masks_le'] = torch.zeros(
+        ((data['edge_index'].shape[1]), 1), dtype=bool
+    )
+    data['edge_masks_le'][:-2] = True
+    assert (
+        torch.abs(
+            model(data) -
+            torch.tensor([
+                [0.6782549308530665, -0.14335551625226037],
+                [0.6782549308530665, -0.14335551625226037],
+                [0.6782549308530665, -0.14335551625226037],
+                [0.6782549308530665, -0.14335551625226037],
+                [0.6782549308530665, -0.14335551625226037],
+                [0.6918278001458904, -0.11675286094651467],
+            ])
+        ) < 1E-12
+    ).all()
+
+
 def test_schnet_1() -> None:
     torch.manual_seed(0)
     torch_tools.set_default_dtype('float64')
@@ -533,7 +633,45 @@ def test_schnet_2() -> None:
     ).all()
 
 
+def test_schnet_3() -> None:
+    torch.manual_seed(0)
+    torch_tools.set_default_dtype('float64')
+
+    model = SchNetModel(
+        n_out=2,
+        cutoff=0.1,
+        cutoff_l=0.2,
+        atomic_numbers=[1, 8],
+        n_bases=6,
+        n_layers=2,
+        n_filters=16,
+        n_hidden_channels=16,
+        aggr='attention',
+    )
+
+    data = test_get_data().to_dict()
+    data['edge_masks_le'] = torch.zeros(
+        ((data['edge_index'].shape[1]), 1), dtype=bool
+    )
+    data['edge_masks_le'][:-2] = True
+    assert (
+        torch.abs(
+            model(data) -
+            torch.tensor([
+                [-0.057877079115427730, 0.03033736463546577],
+                [-0.057877079115427730, 0.03033736463546577],
+                [-0.057877079115427730, 0.03033736463546577],
+                [-0.057877079115427730, 0.03033736463546577],
+                [-0.057877079115427730, 0.03033736463546577],
+                [-0.057687594332204016, 0.01610545549363238],
+            ])
+        ) < 1E-12
+    ).all()
+
+
 if __name__ == '__main__':
     test_gvp()
+    test_gvp_1()
     test_schnet_1()
     test_schnet_2()
+    test_schnet_3()
