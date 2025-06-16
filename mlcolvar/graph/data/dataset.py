@@ -236,7 +236,7 @@ def _create_dataset_from_configuration(
 
     if config.subsystem is not None:
         subsystem_masks = torch.zeros((one_hot.shape[0], 1), dtype=torch.bool)
-        subsystem_masks[config.system, 0] = 1
+        subsystem_masks[config.subsystem, 0] = 1
         edge_masks_le = torch.zeros((edge_index.shape[1], 1), dtype=torch.bool)
         edge_masks_le[-edge_index_l.shape[1]:, 0] = 1
     else:
