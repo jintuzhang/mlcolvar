@@ -173,13 +173,20 @@ class GraphCommittor(GraphBaseCV):
         loss, loss_var, loss_bound_A, loss_bound_B = self.loss_fn(
             batch_dict, q
         )
-        loss_z_diff = (z.max().abs() - z.min().abs()).pow(2)
-        loss = loss + loss_z_diff
+        #loss_z_diff = (z.max().abs() - z.min().abs()).pow(2)
+        #loss = loss + loss_z_diff
+
+        self.threshold = 10.0
+        self.penalty_weight = 10.0
+        over_threshold = torch.relu(z.abs() - self.threshold)
+        loss_z_range = self.penalty_weight * torch.mean(over_threshold.pow(2))
+        loss = loss + loss_z_range
 
         name = 'train' if self.training else 'valid'
         self.log(f'{name}_loss', loss, on_epoch=True)
         self.log(f'{name}_loss_variational', loss_var, on_epoch=True)
         self.log(f'{name}_loss_boundary_A', loss_bound_A, on_epoch=True)
         self.log(f'{name}_loss_boundary_B', loss_bound_B, on_epoch=True)
-        self.log(f'{name}_loss_z_diff', loss_z_diff, on_epoch=True)
+        #self.log(f'{name}_loss_z_diff', loss_z_diff, on_epoch=True)
+        self.log(f'{name}_loss_z_range', loss_z_range, on_epoch=True)
         return loss
