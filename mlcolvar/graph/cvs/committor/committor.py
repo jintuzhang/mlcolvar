@@ -73,7 +73,12 @@ class GraphCommittor(GraphBaseCV):
         model_name: str = 'GVPModel',
         model_options: Dict[Any, Any] = {},
         extra_loss_options: Dict[Any, Any] = {
-            'alpha': 1.0, 'gamma': 100.0, 'delta_f': 0.0, 'sigmoid_p': 3.0
+            'alpha': 1.0,
+            'gamma': 100.0,
+            'delta_f': 0.0,
+            'sigmoid_p': 3.0,
+            'penalty_weight': 10.0,
+            'z_threshold': 10.0,
         },
         optimizer_options: Dict[Any, Any] = {},
         **kwargs,
@@ -109,6 +114,12 @@ class GraphCommittor(GraphBaseCV):
             alpha=float(extra_loss_options.get('alpha', 1.0)),
             gamma=float(extra_loss_options.get('gamma', 10000.0)),
             delta_f=float(extra_loss_options.get('delta_f', 0.0)),
+        )
+        self.z_threshold = float(
+            extra_loss_options.get('z_threshold', 10.0)
+        )
+        self.penalty_weight = float(
+            extra_loss_options.get('penalty_weight', 10.0)
         )
 
     def forward_nn(
@@ -173,12 +184,8 @@ class GraphCommittor(GraphBaseCV):
         loss, loss_var, loss_bound_A, loss_bound_B = self.loss_fn(
             batch_dict, q
         )
-        #loss_z_diff = (z.max().abs() - z.min().abs()).pow(2)
-        #loss = loss + loss_z_diff
 
-        self.threshold = 10.0
-        self.penalty_weight = 10.0
-        over_threshold = torch.relu(z.abs() - self.threshold)
+        over_threshold = torch.relu(z.abs() - self.z_threshold)
         loss_z_range = self.penalty_weight * torch.mean(over_threshold.pow(2))
         loss = loss + loss_z_range
 
@@ -187,6 +194,5 @@ class GraphCommittor(GraphBaseCV):
         self.log(f'{name}_loss_variational', loss_var, on_epoch=True)
         self.log(f'{name}_loss_boundary_A', loss_bound_A, on_epoch=True)
         self.log(f'{name}_loss_boundary_B', loss_bound_B, on_epoch=True)
-        #self.log(f'{name}_loss_z_diff', loss_z_diff, on_epoch=True)
         self.log(f'{name}_loss_z_range', loss_z_range, on_epoch=True)
         return loss
