@@ -206,7 +206,7 @@ def get_dataset_kolmogorov_bias(
     dataset: gdata.GraphDataSet,
     beta: float,
     epsilon: float = 1E-6,
-    lambd: float = 0.0,
+    lambd: float = 1.0,
     weighted: bool = False,
     batch_size: int = None,
     show_progress: bool = True,
