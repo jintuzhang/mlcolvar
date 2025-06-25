@@ -13,7 +13,6 @@ GNN committor utils.
 __all__ = [
     'GraphCommittorLoss',
     'get_dataset_kolmogorov_bias',
-    'get_dataset_kolmogorov_bias_mass_weighted',
     'compute_committor_weights'
 ]
 
@@ -208,8 +207,8 @@ def get_dataset_kolmogorov_bias(
     beta: float,
     epsilon: float = 1E-6,
     lambd: float = 0.0,
+    weighted: bool = False,
     batch_size: int = None,
-    device: str = 'cpu',
     show_progress: bool = True,
     progress_prefix: str = 'Calculating KM Bias'
 ) -> np.ndarray:
@@ -219,7 +218,7 @@ def get_dataset_kolmogorov_bias(
 
     Parameters
     ----------
-    input_model : torch.nn.Module
+    model : torch.nn.Module
         Model to compute the bias from.
     dataset: mlcovar.graph.data.GraphDataSet
         Dataset on which to compute the bias.
@@ -229,99 +228,15 @@ def get_dataset_kolmogorov_bias(
         Regularization term in the logarithm.
     lambd : float
         Multiplicative term for the whole bias.
+    weighted : bool
+        If calculate the mass weighted bias value.
     batch_size:
         Batch size used for evaluating the CV.
     show_progress: bool
         If show the progress bar.
     """
-    epsilon = torch.tensor(epsilon, dtype=torch.float64)
 
-    datamodule = gdata.GraphDataModule(
-        dataset,
-        lengths=(1.0,),
-        batch_size=batch_size,
-        random_split=False,
-        shuffle=False
-    )
-    datamodule.setup()
-
-    gradients_list = []
-
-    if show_progress:
-        items = gutils.progress.pbar(
-            datamodule.train_dataloader(),
-            frequency=0.001,
-            prefix=progress_prefix
-        )
-    else:
-        items = datamodule.train_dataloader()
-
-    for batchs in items:
-        batch_dict = batchs.to(device).to_dict()
-        q = model(batch_dict)[:, 1].unsqueeze(-1)
-        grad_outputs: Optional[List[Optional[torch.Tensor]]] = [
-            torch.ones_like(q, device=device)
-        ]
-        gradients = torch.autograd.grad(
-            outputs=[q],
-            inputs=[batch_dict['positions']],
-            grad_outputs=grad_outputs,
-            retain_graph=False,
-            create_graph=False,
-        )[0]
-
-        # square and sum over Cartesian dims
-        gradients_atomic = torch.pow(gradients, 2)  # [n_nodes, 3]
-        gradients_atomic = torch.sum(
-            gradients_atomic, dim=1, keepdim=True
-        )  # [n_nodes, 1]
-        # sum over batchs
-        gradients_batch = gutils.torch_tools.scatter_sum(
-            gradients_atomic, batch_dict['batch'], dim=0
-        )  # [n_graphs, 1]
-
-        gradients_list.append(gradients_batch)
-
-    gradients = torch.vstack(gradients_list)
-    bias = -lambd * (1 / beta) * (
-        torch.log(gradients + epsilon) - torch.log(epsilon)
-    )
-
-    return bias.cpu().numpy()
-
-
-def get_dataset_kolmogorov_bias_mass_weighted(
-    model: GraphBaseCV,
-    dataset: gdata.GraphDataSet,
-    beta: float,
-    epsilon: float = 1E-6,
-    lambd: float = 0.0,
-    batch_size: int = None,
-    device: str = 'cpu',
-    show_progress: bool = True,
-    progress_prefix: str = 'Calculating KM Bias'
-) -> np.ndarray:
-    """
-    Wrappper class to compute the Kolmogorov bias V_K from a GNN-based
-    committor model.
-
-    Parameters
-    ----------
-    input_model : torch.nn.Module
-        Model to compute the bias from.
-    dataset: mlcovar.graph.data.GraphDataSet
-        Dataset on which to compute the bias.
-    beta: float
-        Inverse temperature in the right energy units, i.e. 1/(k_B*T)
-    epsilon : float
-        Regularization term in the logarithm.
-    lambd : float
-        Multiplicative term for the whole bias.
-    batch_size:
-        Batch size used for evaluating the CV.
-    show_progress: bool
-        If show the progress bar.
-    """
+    device = next(model.parameters()).device
     epsilon = torch.tensor(epsilon, dtype=torch.float64)
 
     datamodule = gdata.GraphDataModule(
@@ -362,11 +277,14 @@ def get_dataset_kolmogorov_bias_mass_weighted(
             create_graph=False,
         )[0]
 
+        # get masses
         node_types = torch.where(batch_dict['node_attrs'])[1]  # [n_graphs, 1]
         atomic_masses_used = atomic_masses[node_types].unsqueeze(-1)
 
         # square and sum over Cartesian dims
-        gradients_atomic = torch.pow(gradients, 2) / atomic_masses_used
+        gradients_atomic = torch.pow(gradients, 2)  # [n_nodes, 3]
+        if weighted:
+            gradients_atomic = gradients_atomic / atomic_masses_used
         gradients_atomic = torch.sum(
             gradients_atomic, dim=1, keepdim=True
         )  # [n_nodes, 1]
