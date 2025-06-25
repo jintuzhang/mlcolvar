@@ -13,6 +13,7 @@ GNN committor utils.
 __all__ = [
     'GraphCommittorLoss',
     'get_dataset_kolmogorov_bias',
+    'get_dataset_kolmogorov_bias_mass_weighted',
     'compute_committor_weights'
 ]
 
@@ -289,8 +290,7 @@ def get_dataset_kolmogorov_bias(
     return bias.cpu().numpy()
 
 
-
-def get_dataset_kolmogorov_bias_massweighted(
+def get_dataset_kolmogorov_bias_mass_weighted(
     model: GraphBaseCV,
     dataset: gdata.GraphDataSet,
     beta: float,
@@ -333,15 +333,11 @@ def get_dataset_kolmogorov_bias_massweighted(
     )
     datamodule.setup()
 
-
-    atomic_masses=gdata.atomic.get_masses(dataset.atomic_numbers)
-    atomic_masses = torch.tensor(
-            atomic_masses, dtype=torch.get_default_dtype(),device=device
-    )
-    
-    print (atomic_masses)
-
     gradients_list = []
+    atomic_masses = gdata.atomic.get_masses(dataset.atomic_numbers)
+    atomic_masses = torch.tensor(
+        atomic_masses, dtype=torch.get_default_dtype(), device=device
+    )
 
     if show_progress:
         items = gutils.progress.pbar(
@@ -364,15 +360,13 @@ def get_dataset_kolmogorov_bias_massweighted(
             grad_outputs=grad_outputs,
             retain_graph=False,
             create_graph=False,
-        )[0]    
-        
+        )[0]
 
         node_types = torch.where(batch_dict['node_attrs'])[1]  # [n_graphs, 1]
-        atomic_masses_used = atomic_masses[node_types].unsqueeze(-1)  # [n_nodes, 1]
-        print (atomic_masses_used)
+        atomic_masses_used = atomic_masses[node_types].unsqueeze(-1)
 
         # square and sum over Cartesian dims
-        gradients_atomic = torch.pow(gradients, 2)/atomic_masses_used# [n_nodes, 3]
+        gradients_atomic = torch.pow(gradients, 2) / atomic_masses_used
         gradients_atomic = torch.sum(
             gradients_atomic, dim=1, keepdim=True
         )  # [n_nodes, 1]
