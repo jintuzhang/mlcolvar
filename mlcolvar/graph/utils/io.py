@@ -309,7 +309,7 @@ def _configures_from_trajectory(
         # environment atom has been defined, the subsystem atoms will
         # have to be selected from the sliced atoms, which are previously
         # defined by system_selection.
-        # So here we only check if the system_selection contains environment
+        # So here we only check if the subsystem_selection contains environment
         # atoms, under the case where both system_selection AND
         # environment_selection have been given.
         if system_selection is not None and environment_selection is not None:
