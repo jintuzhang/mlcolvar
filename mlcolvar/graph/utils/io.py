@@ -305,16 +305,22 @@ def _configures_from_trajectory(
             'No atoms will be selected with `subsystem_selection`: '
             + '"{:s}"!'.format(subsystem_selection)
         )
-        if system_selection is not None:
-            c_1 = collections.Counter(system_selection)
-            c_2 = collections.Counter(subsystem_selection)
+        # NOTE: in the above step we have done the atom_slice, so if no
+        # environment atom has been defined, the subsystem atoms will
+        # have to be selected from the sliced atoms, which are previously
+        # defined by system_selection.
+        # So here we only check if the system_selection contains environment
+        # atoms, under the case where both system_selection AND
+        # environment_selection have been given.
+        if system_selection is not None and environment_selection is not None:
+            c_1 = collections.Counter(system_atoms)
+            c_2 = collections.Counter(subsystem_atoms)
             assert c_1 >= c_2, (
                 "All atoms selected by `subsystem_selection` should also be "
                 + "selected by `system_selection`!"
             )
     else:
         subsystem_atoms = None
-
 
     atomic_numbers = [a.element.number for a in trajectory.top.atoms]
     if trajectory.unitcell_vectors is not None:
