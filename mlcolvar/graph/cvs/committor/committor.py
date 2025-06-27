@@ -64,6 +64,7 @@ class GraphCommittor(GraphBaseCV):
     mlcolvar.graph.cvs.committor.utils.compute_committor_weights
         Utils to compute the appropriate weights for the training set
     """
+
     def __init__(
         self,
         cutoff: float,
@@ -115,10 +116,10 @@ class GraphCommittor(GraphBaseCV):
             gamma=float(extra_loss_options.get('gamma', 10000.0)),
             delta_f=float(extra_loss_options.get('delta_f', 0.0)),
         )
-        self.z_threshold = float(
+        self._z_threshold = float(
             extra_loss_options.get('z_threshold', 10.0)
         )
-        self.penalty_weight = float(
+        self._penalty_weight = float(
             extra_loss_options.get('penalty_weight', 10.0)
         )
 
@@ -185,8 +186,8 @@ class GraphCommittor(GraphBaseCV):
             batch_dict, q
         )
 
-        over_threshold = torch.relu(z.abs() - self.z_threshold)
-        loss_z_range = self.penalty_weight * torch.mean(over_threshold.pow(2))
+        over_threshold = torch.relu(z.abs() - self._z_threshold)
+        loss_z_range = self._penalty_weight * torch.mean(over_threshold.pow(2))
         loss = loss + loss_z_range
 
         name = 'train' if self.training else 'valid'

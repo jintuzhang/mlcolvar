@@ -67,7 +67,10 @@ class GraphTimeLaggedCommittor(GraphBaseCV):
         model_name: str = 'GVPModel',
         model_options: Dict[Any, Any] = {},
         extra_loss_options: Dict[Any, Any] = {
-            'alpha': 10000.0, 'sigmoid_p': 3.0,
+            'alpha': 10000.0,
+            'sigmoid_p': 3.0,
+            'penalty_weight': 10.0,
+            'z_threshold': 10.0,
         },
         optimizer_options: Dict[Any, Any] = {},
         **kwargs,
@@ -91,7 +94,15 @@ class GraphTimeLaggedCommittor(GraphBaseCV):
             **kwargs
         )
 
-        self._alpha = extra_loss_options.get('alpha', 10000.0)
+        self._alpha = float(
+            extra_loss_options.get('alpha', 10000.0)
+        )
+        self._z_threshold = float(
+            extra_loss_options.get('z_threshold', 10.0)
+        )
+        self._penalty_weight = float(
+            extra_loss_options.get('penalty_weight', 10.0)
+        )
         self.sigmoid = Custom_Sigmoid(extra_loss_options.get('sigmoid_p', 3.0))
         self.register_buffer('is_committor', torch.tensor(1, dtype=int))
 
@@ -175,16 +186,23 @@ class GraphTimeLaggedCommittor(GraphBaseCV):
             torch.mean(torch.pow((q_t[mask_b_t] - 1), 2))
             + torch.mean(torch.pow((q_lag[mask_b_lag] - 1), 2))
         ) * self._alpha
-        loss_z_diff = (
-            (z_t.max().abs() - z_t.min().abs()).pow(2)
-            + (z_lag.max().abs() - z_lag.min().abs()).pow(2)
+
+        loss_z_range = 0
+        over_threshold = torch.relu(z_t.abs() - self._z_threshold)
+        loss_z_range += self._penalty_weight * torch.mean(
+            over_threshold.pow(2)
         )
-        loss = loss_v + loss_a + loss_b + loss_z_diff
+        over_threshold = torch.relu(z_lag.abs() - self._z_threshold)
+        loss_z_range += self._penalty_weight * torch.mean(
+            over_threshold.pow(2)
+        )
+
+        loss = loss_v + loss_a + loss_b + loss_z_range
 
         name = 'train' if self.training else 'valid'
         self.log(f'{name}_loss', loss, on_epoch=True)
         self.log(f'{name}_loss_variational', loss_v, on_epoch=True)
         self.log(f'{name}_loss_boundary_A', loss_a, on_epoch=True)
         self.log(f'{name}_loss_boundary_B', loss_b, on_epoch=True)
-        self.log(f'{name}_loss_z_diff', loss_z_diff, on_epoch=True)
+        self.log(f'{name}_loss_z_range', loss_z_range, on_epoch=True)
         return loss
