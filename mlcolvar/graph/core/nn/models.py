@@ -36,7 +36,7 @@ class BaseModel(nn.Module):
         The lone graph cutoff radius between subsystem atoms.
     n_bases: int
         Size of the basis set.
-    n_polynomials: bool
+    n_polynomials: int
         Order of the polynomials in the basis functions.
     basis_type: str
         Type of the basis function.
@@ -132,7 +132,7 @@ class GVPModel(BaseModel):
         The lone graph cutoff radius between subsystem atoms.
     n_bases: int
         Size of the basis set.
-    n_polynomials: bool
+    n_polynomials: int
         Order of the polynomials in the basis functions.
     n_layers: int
         Number of the graph convolution layers.
@@ -325,6 +325,8 @@ class SAKEModel(BaseModel):
         The lone graph cutoff radius between subsystem atoms.
     n_bases: int
         Size of the basis set.
+    n_polynomials: int
+        Order of the polynomials in the basis functions.
     n_layers: int
         Number of the graph convolution layers.
     n_hidden_channels: int
@@ -349,17 +351,24 @@ class SAKEModel(BaseModel):
         cutoff: float,
         atomic_numbers: List[int],
         cutoff_l: float = -1.0,
-        n_bases: int = 16,
+        n_bases: int = 6,
+        n_polynomials: int = 0,
         n_layers: int = 2,
         n_hidden_channels: int = 16,
         n_heads: int = 4,
         drop_rate: int = 0.0,
-        w_out_after_sum: bool = False,
+        w_out_after_sum: bool = True,
         basis_type: str = 'gaussian',
     ) -> None:
 
         super().__init__(
-            n_out, cutoff, atomic_numbers, cutoff_l, n_bases, 0, basis_type
+            n_out,
+            cutoff,
+            atomic_numbers,
+            cutoff_l,
+            n_bases,
+            n_polynomials,
+            basis_type
         )
 
         self.W_v = nn.Linear(
@@ -875,9 +884,35 @@ def test_schnet_3() -> None:
     ).all()
 
 
+def test_sake() -> None:
+    torch.manual_seed(0)
+    torch_tools.set_default_dtype('float64')
+
+    model = SAKEModel(
+        n_out=2,
+        cutoff=0.1,
+        atomic_numbers=[1, 8],
+        n_bases=6,
+        n_layers=2,
+        n_heads=4,
+        n_hidden_channels=14,
+        w_out_after_sum=True,
+        basis_type='gaussian',
+    )
+
+    data = test_get_data().to_dict()
+    assert (
+        torch.abs(
+            model(data) -
+            torch.tensor([[0.1074621226895661, 0.06631259916053499]] * 6)
+        ) < 1E-12
+    ).all()
+
+
 if __name__ == '__main__':
     test_gvp()
     test_gvp_1()
+    test_sake()
     test_schnet_1()
     test_schnet_2()
     test_schnet_3()
