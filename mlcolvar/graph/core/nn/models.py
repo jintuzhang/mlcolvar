@@ -465,6 +465,49 @@ class SchNetModel(BaseModel):
 
         return out
 
+    def forward_nodefeature(
+        self, data: Dict[str, torch.Tensor], scatter_mean: bool = True
+    ) -> torch.Tensor:
+        """
+        The forward pass.
+
+        Parameters
+        ----------
+        data: Dict[str, torch.Tensor]
+            The data dict. Usually came from the `to_dict` method of a
+            `torch_geometric.data.Batch` object.
+        scatter_mean: bool
+            If perform the scatter mean to the model output.
+        """
+
+        h_E = self.embed_edge(data)
+        h_V = self.W_v(data['node_attrs'])
+
+        batch_id = data['batch']
+
+        for layer in self.layers:
+            h_V = h_V + layer(h_V, data['edge_index'], h_E[0], h_E[1])
+
+        # if not self._w_out_after_sum:
+        #     for w in self.W_out:
+        #         h_V = w(h_V)
+        out = h_V
+
+        if scatter_mean:
+            if 'system_masks' not in data.keys():
+                out = torch_tools.scatter_mean(out, batch_id, dim=0)
+            else:
+                out = out * data['system_masks']
+                out = torch_tools.scatter_sum(out, batch_id, dim=0)
+                out = out / data['n_system']
+
+        # if self._w_out_after_sum:
+        #     for w in self.W_out:
+        #         out = w(out)
+
+        return out
+
+
 
 def test_get_data() -> tg.data.Batch:
     # TODO: This is not a real test, but a helper function for other tests.
