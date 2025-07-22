@@ -465,11 +465,11 @@ class SchNetModel(BaseModel):
 
         return out
 
-    def forward_nodefeature(
-        self, data: Dict[str, torch.Tensor], scatter_mean: bool = True
+    def forward_node_feature(
+        self, data: Dict[str, torch.Tensor]
     ) -> torch.Tensor:
         """
-        The forward pass.
+        The forward pass without the readout function.
 
         Parameters
         ----------
@@ -483,30 +483,19 @@ class SchNetModel(BaseModel):
         h_E = self.embed_edge(data)
         h_V = self.W_v(data['node_attrs'])
 
-        batch_id = data['batch']
-
         for layer in self.layers:
-            h_V = h_V + layer(h_V, data['edge_index'], h_E[0], h_E[1])
+            h_V = h_V + layer(
+                h_V,
+                data['edge_index'],
+                h_E[0],
+                h_E[1],
+                (
+                    None if 'edge_masks_le' not in data.keys()
+                    else data['edge_masks_le']
+                )
+            )
 
-        # if not self._w_out_after_sum:
-        #     for w in self.W_out:
-        #         h_V = w(h_V)
-        out = h_V
-
-        if scatter_mean:
-            if 'system_masks' not in data.keys():
-                out = torch_tools.scatter_mean(out, batch_id, dim=0)
-            else:
-                out = out * data['system_masks']
-                out = torch_tools.scatter_sum(out, batch_id, dim=0)
-                out = out / data['n_system']
-
-        # if self._w_out_after_sum:
-        #     for w in self.W_out:
-        #         out = w(out)
-
-        return out
-
+        return h_V
 
 
 def test_get_data() -> tg.data.Batch:
