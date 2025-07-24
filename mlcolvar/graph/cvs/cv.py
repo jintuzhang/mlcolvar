@@ -216,7 +216,8 @@ class GraphBaseCV(lightning.LightningModule):
         Example data.
         """
         numbers = self._model.atomic_numbers.cpu().numpy().tolist()
-        positions = np.ones((len(numbers), 3)) * np.arange(len(numbers)) * 0.05
+        positions = np.ones((len(numbers), 3))
+        positions = positions * np.arange(len(numbers)).reshape((-1, 1)) * 0.05
         cell = np.identity(3, dtype=float) * 0.2
         graph_labels = np.array([[0]])
         node_labels = np.array([[0]] * len(numbers))
