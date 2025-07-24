@@ -373,15 +373,36 @@ class SchNetModel(BaseModel):
                 schnet.ShiftedSoftplus(),
                 nn.Linear(n_filters // 2, 1)
             )
-            aggr = tg.nn.aggr.AttentionalAggregation(self.attention_gate)
+            aggr = [
+                tg.nn.aggr.AttentionalAggregation(self.attention_gate)
+            ] * n_layers
+        elif aggr in ['attention_separate', 'attentional_separate']:
+            self.attention_gate = nn.ModuleList([
+                nn.Sequential(
+                    nn.Linear(n_filters, n_filters // 2),
+                    schnet.ShiftedSoftplus(),
+                    nn.Linear(n_filters // 2, 1)
+                )
+                for _ in range(n_layers)
+            ])
+            aggr = [
+                tg.nn.aggr.AttentionalAggregation(self.attention_gate[i])
+                for i in range(n_layers)
+            ]
         else:
             self.attention_gate = None
+            aggr = [aggr] * n_layers
 
         self.layers = nn.ModuleList([
             schnet.InteractionBlock(
-                n_hidden_channels, n_bases, n_filters, cutoff, cutoff_l, aggr
+                n_hidden_channels,
+                n_bases,
+                n_filters,
+                cutoff,
+                cutoff_l,
+                aggr[i]
             )
-            for _ in range(n_layers)
+            for i in range(n_layers)
         ])
 
         self.W_out = nn.ModuleList([
@@ -408,11 +429,17 @@ class SchNetModel(BaseModel):
         nn.init.xavier_uniform_(self.W_out[2].weight)
         self.W_out[2].bias.data.fill_(0)
 
-        if self.attention_gate:
+        if isinstance(self.attention_gate, torch.nn.Sequential):
             nn.init.xavier_uniform_(self.attention_gate[0].weight)
             self.attention_gate[0].bias.data.fill_(0)
             nn.init.xavier_uniform_(self.attention_gate[2].weight)
             self.attention_gate[2].bias.data.fill_(0)
+        elif isinstance(self.attention_gate, torch.nn.ModuleList):
+            for gate in self.attention_gate:
+                nn.init.xavier_uniform_(gate[0].weight)
+                gate[0].bias.data.fill_(0)
+                nn.init.xavier_uniform_(gate[2].weight)
+                gate[2].bias.data.fill_(0)
 
     def forward(
         self, data: Dict[str, torch.Tensor], scatter_mean: bool = True
