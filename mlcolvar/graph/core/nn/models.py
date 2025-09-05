@@ -631,6 +631,7 @@ class PaiNNModel(BaseModel):
             )
             h_V_s, h_V_v = s_temp + h_V_s, v_temp + h_V_v
             h_V_s, h_V_v = update(h_V_s, h_V_v)
+            h_V_s, h_V_v = s_temp + h_V_s, v_temp + h_V_v
 
         if not self._w_out_after_sum:
             for w in self.W_out:
