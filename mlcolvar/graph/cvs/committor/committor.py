@@ -80,6 +80,7 @@ class GraphCommittor(GraphBaseCV):
             'sigmoid_p': 3.0,
             'penalty_weight': 10.0,
             'z_threshold': 10.0,
+            'n_bootstrap': 0,
         },
         optimizer_options: Dict[Any, Any] = {},
         **kwargs,
@@ -121,6 +122,9 @@ class GraphCommittor(GraphBaseCV):
         )
         self._penalty_weight = float(
             extra_loss_options.get('penalty_weight', 10.0)
+        )
+        self._n_bootstrap = int(
+            extra_loss_options.get('n_bootstrap', 0)
         )
 
     def forward_nn(
@@ -185,6 +189,9 @@ class GraphCommittor(GraphBaseCV):
         loss, loss_var, loss_bound_A, loss_bound_B = self.loss_fn(
             batch_dict, q
         )
+
+        if self.current_epoch < self._n_bootstrap:
+            loss = loss_bound_A + loss_bound_B
 
         over_threshold = torch.relu(z.abs() - self._z_threshold)
         loss_z_range = self._penalty_weight * torch.mean(over_threshold.pow(2))
