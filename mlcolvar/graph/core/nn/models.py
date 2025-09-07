@@ -921,9 +921,35 @@ def test_schnet_3() -> None:
     ).all()
 
 
+def test_painn() -> None:
+    torch.manual_seed(0)
+    torch_tools.set_default_dtype('float64')
+
+    model = PaiNNModel(
+        n_out=2,
+        cutoff=0.1,
+        atomic_numbers=[1, 8],
+        n_bases=6,
+        n_layers=2,
+        n_hidden_channels=12,
+        w_out_after_sum=True,
+        basis_type='gaussian',
+        aggr='attention_separate',
+    )
+
+    data = test_get_data().to_dict()
+    assert (
+        torch.abs(
+            model(data) -
+            torch.tensor([[-0.014263778030142952, -0.012654239687045616]] * 6)
+        ) < 1E-12
+    ).all()
+
+
 if __name__ == '__main__':
     test_gvp()
     test_gvp_1()
+    test_painn()
     test_schnet_1()
     test_schnet_2()
     test_schnet_3()
