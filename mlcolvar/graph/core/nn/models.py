@@ -6,7 +6,6 @@ from typing import List, Dict, Tuple
 
 from mlcolvar.graph import data as gdata
 from mlcolvar.graph.core.nn import radial
-from mlcolvar.graph.core.nn import sake
 from mlcolvar.graph.core.nn import painn
 from mlcolvar.graph.core.nn import schnet
 from mlcolvar.graph.core.nn import gvp_layer
@@ -302,161 +301,6 @@ class GVPModel(BaseModel):
                 out = out * data['system_masks']
                 out = torch_tools.scatter_sum(out, batch_id, dim=0)
                 out = out / data['n_system']
-
-        return out
-
-
-class SAKEModel(BaseModel):
-    """
-    The E(3)-invariant SAKE model [1]. This implementation is taken from:
-    https://github.com/ZhangGroup-MITChemistry/Schake_GNN/blob/main/SAKE/SAKE_model_v1.py
-
-
-    Parameters
-    ----------
-    n_out: int
-        Size of the output node features.
-    cutoff: float
-        Cutoff radius of the basis functions. Should be the same as the cutoff
-        radius used to build the graphs.
-    atomic_numbers: List[int]
-        The atomic numbers mapping, e.g. the `atomic_numbers` attribute of a
-        `mlcolvar.graph.data.GraphDataSet` instance.
-    cutoff_l: float
-        The lone graph cutoff radius between subsystem atoms.
-    n_bases: int
-        Size of the basis set.
-    n_polynomials: int
-        Order of the polynomials in the basis functions.
-    n_layers: int
-        Number of the graph convolution layers.
-    n_hidden_channels: int
-        Size of hidden embeddings.
-    n_heads: int
-        Size of the attention heads.
-    w_out_after_sum: bool
-        If apply the readout MLP layer after the scatter sum.
-    basis_type: str
-        Type of the basis function.
-
-    References
-    ----------
-    .. [1] Airas, Justin, and Bin Zhang.
-        "Scaling graph neural networks to large proteins."
-        Journal of chemical theory and computation 21.4 (2025): 2055-2066.
-    """
-
-    def __init__(
-        self,
-        n_out: int,
-        cutoff: float,
-        atomic_numbers: List[int],
-        cutoff_l: float = -1.0,
-        n_bases: int = 6,
-        n_polynomials: int = 0,
-        n_layers: int = 2,
-        n_hidden_channels: int = 16,
-        n_heads: int = 4,
-        drop_rate: int = 0.0,
-        w_out_after_sum: bool = True,
-        basis_type: str = 'gaussian',
-    ) -> None:
-
-        super().__init__(
-            n_out,
-            cutoff,
-            atomic_numbers,
-            cutoff_l,
-            n_bases,
-            n_polynomials,
-            basis_type
-        )
-
-        self.W_v = nn.Linear(
-            len(atomic_numbers), n_hidden_channels, bias=False
-        )
-
-        self.layers = nn.ModuleList([
-            sake.SAKEInteraction(
-                n_bases,
-                cutoff,
-                n_hidden_channels,
-                cutoff_l,
-                n_heads,
-            )
-            for _ in range(n_layers)
-        ])
-
-        self.W_out = nn.ModuleList([
-            nn.Linear(n_hidden_channels, n_hidden_channels // 2),
-            torch.nn.CELU(alpha=2.0),
-            nn.Linear(n_hidden_channels // 2, n_out)
-        ])
-
-        self._w_out_after_sum = w_out_after_sum
-
-        self.reset_parameters()
-
-    def reset_parameters(self) -> None:
-        """
-        Resets all learnable parameters of the module.
-        """
-        self.W_v.reset_parameters()
-
-        for layer in self.layers:
-            layer.reset_parameters()
-
-        nn.init.xavier_uniform_(self.W_out[0].weight)
-        self.W_out[0].bias.data.fill_(0)
-        nn.init.xavier_uniform_(self.W_out[2].weight)
-        self.W_out[2].bias.data.fill_(0)
-
-    def forward(
-        self, data: Dict[str, torch.Tensor], scatter_mean: bool = True
-    ) -> torch.Tensor:
-        """
-        The forward pass.
-
-        Parameters
-        ----------
-        data: Dict[str, torch.Tensor]
-            The data dict. Usually came from the `to_dict` method of a
-            `torch_geometric.data.Batch` object.
-        scatter_mean: bool
-            If perform the scatter mean to the model output.
-        """
-
-        h_E = self.embed_edge(data)
-        h_V = self.W_v(data['node_attrs'])
-
-        batch_id = data['batch']
-
-        for layer in self.layers:
-            h_V = layer(
-                h_V,
-                data['edge_index'],
-                h_E[0],
-                h_E[1],
-                h_E[2],
-                data.get('edge_masks_le'),
-            )
-
-        if not self._w_out_after_sum:
-            for w in self.W_out:
-                h_V = w(h_V)
-        out = h_V
-
-        if scatter_mean:
-            if 'system_masks' not in data.keys():
-                out = torch_tools.scatter_mean(out, batch_id, dim=0)
-            else:
-                out = out * data['system_masks']
-                out = torch_tools.scatter_sum(out, batch_id, dim=0)
-                out = out / data['n_system']
-
-        if self._w_out_after_sum:
-            for w in self.W_out:
-                out = w(out)
 
         return out
 
@@ -1077,35 +921,9 @@ def test_schnet_3() -> None:
     ).all()
 
 
-def test_sake() -> None:
-    torch.manual_seed(0)
-    torch_tools.set_default_dtype('float64')
-
-    model = SAKEModel(
-        n_out=2,
-        cutoff=0.1,
-        atomic_numbers=[1, 8],
-        n_bases=6,
-        n_layers=2,
-        n_heads=4,
-        n_hidden_channels=14,
-        w_out_after_sum=True,
-        basis_type='gaussian',
-    )
-
-    data = test_get_data().to_dict()
-    assert (
-        torch.abs(
-            model(data) -
-            torch.tensor([[0.1074621226895661, 0.06631259916053499]] * 6)
-        ) < 1E-12
-    ).all()
-
-
 if __name__ == '__main__':
     test_gvp()
     test_gvp_1()
-    test_sake()
     test_schnet_1()
     test_schnet_2()
     test_schnet_3()
