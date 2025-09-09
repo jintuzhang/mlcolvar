@@ -80,7 +80,7 @@ class GraphCommittor(GraphBaseCV):
             'sigmoid_p': 3.0,
             'penalty_weight': 10.0,
             'z_threshold': 10.0,
-            'n_bootstrap': 0,
+            'n_bootstrap': 5,
         },
         optimizer_options: Dict[Any, Any] = {},
         **kwargs,
@@ -124,7 +124,7 @@ class GraphCommittor(GraphBaseCV):
             extra_loss_options.get('penalty_weight', 10.0)
         )
         self._n_bootstrap = int(
-            extra_loss_options.get('n_bootstrap', 0)
+            extra_loss_options.get('n_bootstrap', 5)
         )
 
     def forward_nn(
