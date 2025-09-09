@@ -496,6 +496,47 @@ class PaiNNModel(BaseModel):
 
         return out
 
+    def forward_node_feature(
+        self, data: Dict[str, torch.Tensor]
+    ) -> torch.Tensor:
+        """
+        The forward pass without the readout function.
+
+        Parameters
+        ----------
+        data: Dict[str, torch.Tensor]
+            The data dict. Usually came from the `to_dict` method of a
+            `torch_geometric.data.Batch` object.
+        scatter_mean: bool
+            If perform the scatter mean to the model output.
+        """
+
+        h_E = self.embed_edge(data)
+        h_V_s = self.W_v(data['node_attrs'])
+        h_V_v = torch.zeros(
+            len(data['node_attrs']),
+            h_V_s.shape[1],
+            3,
+            dtype=data['node_attrs'].dtype,
+            device=data['node_attrs'].device,
+        )
+
+        for message, update in zip(self.layers_message, self.layers_update):
+            s_temp, v_temp = message(
+                h_V_s,
+                h_V_v,
+                data['edge_index'],
+                h_E[0],
+                h_E[2],
+                h_E[1],
+                data.get('edge_masks_le'),
+            )
+            h_V_s, h_V_v = s_temp + h_V_s, v_temp + h_V_v
+            h_V_s, h_V_v = update(h_V_s, h_V_v)
+            h_V_s, h_V_v = s_temp + h_V_s, v_temp + h_V_v
+
+        return h_V_s
+
 
 class SchNetModel(BaseModel):
     """
@@ -884,6 +925,16 @@ def test_schnet_2() -> None:
         ) < 1E-12
     ).all()
 
+    result = model.forward_node_feature(data)[:3, :].mean(dim=0, keepdim=True)
+    for w in model.W_out:
+        result = w(result)
+    assert (
+        torch.abs(
+            result -
+            torch.tensor([[0.3654537816221449, -0.0748265132499575]])
+        ) < 1E-12
+    ).all()
+
 
 def test_schnet_3() -> None:
     torch.manual_seed(0)
@@ -942,6 +993,16 @@ def test_painn() -> None:
         torch.abs(
             model(data) -
             torch.tensor([[-0.014263778030142952, -0.012654239687045616]] * 6)
+        ) < 1E-12
+    ).all()
+
+    result = model.forward_node_feature(data)[:3, :].mean(dim=0, keepdim=True)
+    for w in model.W_out:
+        result = w(result)
+    assert (
+        torch.abs(
+            result -
+            torch.tensor([[-0.014263778030142952, -0.012654239687045616]])
         ) < 1E-12
     ).all()
 
