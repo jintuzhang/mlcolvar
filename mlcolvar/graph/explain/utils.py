@@ -1,5 +1,6 @@
 import torch
 import numpy as np
+import typing as tp
 
 from mlcolvar.graph import cvs as gcvs
 from mlcolvar.graph import data as gdata
@@ -71,7 +72,7 @@ def get_dataset_cv_gradients(
     batch_size: int = None,
     show_progress: bool = True,
     progress_prefix: str = 'Calculating CV gradients'
-) -> np.ndarray:
+) -> tp.List[np.ndarray]:
     """
     Get gradients of the CV w.r.t. node positions in a given dataset. The
     calculation will run on the device where the model is on.
@@ -129,4 +130,4 @@ def get_dataset_cv_gradients(
         gradients = [g.cpu().numpy() for g in gradients]
         cv_value_gradients.extend(gradients)
 
-    return np.array(cv_value_gradients)
+    return cv_value_gradients

@@ -1,3 +1,4 @@
+import warnings
 import numpy as np
 from typing import Dict
 
@@ -61,10 +62,20 @@ def graph_node_sensitivity(
         show_progress,
         'Getting gradients'
     )
-    sensitivities_components = np.linalg.norm(gradients, axis=-1)
+    sensitivities_components = [np.linalg.norm(g, axis=-1) for g in gradients]
 
     results = {}
-    results['sensitivities'] = sensitivities_components.mean(axis=0)
+    try:
+        sensitivities_components = np.vstack(sensitivities_components)
+        results['sensitivities'] = sensitivities_components.mean(axis=0)
+    except ValueError:
+        warnings.warn(
+            'Cannot compute avg. sensitivity for a variable-length dataset. '
+        )
+        sensitivities_components = np.array(
+            sensitivities_components, dtype=object
+        )
+        results['sensitivities'] = None
     results['sensitivities_components'] = sensitivities_components
 
     return results
