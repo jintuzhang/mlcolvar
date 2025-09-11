@@ -7,6 +7,7 @@ import collections
 from typing import Union, List, Tuple
 
 from mlcolvar.graph import data as gdata
+from mlcolvar.graph.utils import progress
 
 """
 Some I/O things.
@@ -245,8 +246,14 @@ def create_dataset_from_trajectories(
             )
         )
 
+        if show_progress:
+            items = progress.pbar(
+                range(n_workers), frequency=0.0001, prefix='Merging dataset'
+            )
+        else:
+            items = range(n_workers)
         dataset = gdata.cat_dataset([
-            torch.load('.MGTEMP.{:d}.pt'.format(i)) for i in range(n_workers)
+            torch.load('.MGTEMP.{:d}.pt'.format(i)) for i in items
         ])
         for i in range(n_workers):
             os.remove('.MGTEMP.{:d}.pt'.format(i))
