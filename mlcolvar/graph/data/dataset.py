@@ -383,7 +383,7 @@ def load_dataset(file_name: str) -> GraphDataSet:
     file_name: str
         The filename.
     """
-    dataset = torch.load(file_name)
+    dataset = torch.load(file_name, weights_only=False)
 
     assert isinstance(dataset, GraphDataSet)
 

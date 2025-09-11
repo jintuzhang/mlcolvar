@@ -253,7 +253,8 @@ def create_dataset_from_trajectories(
         else:
             items = range(n_workers)
         dataset = gdata.cat_dataset([
-            torch.load('.MGTEMP.{:d}.pt'.format(i)) for i in items
+            torch.load('.MGTEMP.{:d}.pt'.format(i), weights_only=False)
+            for i in items
         ])
         for i in range(n_workers):
             os.remove('.MGTEMP.{:d}.pt'.format(i))
