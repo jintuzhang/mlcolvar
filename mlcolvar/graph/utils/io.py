@@ -1,3 +1,4 @@
+import os
 import torch
 import numpy as np
 import mdtraj as md
@@ -247,6 +248,8 @@ def create_dataset_from_trajectories(
         dataset = gdata.cat_dataset([
             torch.load('.MGTEMP.{:d}.pt'.format(i)) for i in range(n_workers)
         ])
+        for i in range(n_workers):
+            os.remove('.MGTEMP.{:d}.pt'.format(i))
     else:
         dataset = gdata.create_dataset_from_configurations(
             configurations,
