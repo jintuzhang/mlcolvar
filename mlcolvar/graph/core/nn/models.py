@@ -6,6 +6,7 @@ from typing import List, Dict, Tuple
 
 from mlcolvar.graph import data as gdata
 from mlcolvar.graph.core.nn import radial
+from mlcolvar.graph.core.nn import painn
 from mlcolvar.graph.core.nn import schnet
 from mlcolvar.graph.core.nn import gvp_layer
 from mlcolvar.graph.utils import torch_tools
@@ -35,7 +36,7 @@ class BaseModel(nn.Module):
         The lone graph cutoff radius between subsystem atoms.
     n_bases: int
         Size of the basis set.
-    n_polynomials: bool
+    n_polynomials: int
         Order of the polynomials in the basis functions.
     basis_type: str
         Type of the basis function.
@@ -131,7 +132,7 @@ class GVPModel(BaseModel):
         The lone graph cutoff radius between subsystem atoms.
     n_bases: int
         Size of the basis set.
-    n_polynomials: bool
+    n_polynomials: int
         Order of the polynomials in the basis functions.
     n_layers: int
         Number of the graph convolution layers.
@@ -302,6 +303,239 @@ class GVPModel(BaseModel):
                 out = out / data['n_system']
 
         return out
+
+
+class PaiNNModel(BaseModel):
+    """
+    The PaiNN model [1]. This implementation is taken from:
+    https://github.com/MaxH1996/PaiNN-in-PyG/blob/main/PaiNN.py
+
+
+    Parameters
+    ----------
+    n_out: int
+        Size of the output node features.
+    cutoff: float
+        Cutoff radius of the basis functions. Should be the same as the cutoff
+        radius used to build the graphs.
+    atomic_numbers: List[int]
+        The atomic numbers mapping, e.g. the `atomic_numbers` attribute of a
+        `mlcolvar.graph.data.GraphDataSet` instance.
+    cutoff_l: float
+        The lone graph cutoff radius between subsystem atoms.
+    n_bases: int
+        Size of the basis set.
+    n_polynomials: int
+        Order of the polynomials in the basis functions.
+    n_layers: int
+        Number of the graph convolution layers.
+    n_hidden_channels: int
+        Size of hidden embeddings.
+    aggr: str
+        Type of the GNN aggr function.
+    w_out_after_sum: bool
+        If apply the readout MLP layer after the scatter sum.
+    basis_type: str
+        Type of the basis function.
+
+    References
+    ----------
+    .. [1] Schütt, Kristof, Oliver Unke, and Michael Gastegger.
+        "Equivariant message passing for the prediction of tensorial properties
+        and molecular spectra." International conference on machine learning.
+        PMLR, 2021.
+    """
+
+    def __init__(
+        self,
+        n_out: int,
+        cutoff: float,
+        atomic_numbers: List[int],
+        cutoff_l: float = -1.0,
+        n_bases: int = 6,
+        n_polynomials: int = 0,
+        n_layers: int = 2,
+        n_hidden_channels: int = 16,
+        drop_rate: int = 0.0,
+        aggr: str = 'mean',
+        w_out_after_sum: bool = True,
+        basis_type: str = 'gaussian',
+    ) -> None:
+
+        super().__init__(
+            n_out,
+            cutoff,
+            atomic_numbers,
+            cutoff_l,
+            n_bases,
+            n_polynomials,
+            basis_type
+        )
+
+        self.W_v = nn.Linear(
+            len(atomic_numbers), n_hidden_channels, bias=False
+        )
+
+        if aggr in ['attention', 'attentional']:
+            self.attention_gate = painn.AttentionGatePaiNN(n_hidden_channels)
+            aggr = [
+                tg.nn.aggr.AttentionalAggregation(self.attention_gate)
+            ] * n_layers
+        elif aggr in ['attention_separate', 'attentional_separate']:
+            self.attention_gate = nn.ModuleList([
+                painn.AttentionGatePaiNN(n_hidden_channels)
+                for _ in range(n_layers)
+            ])
+            aggr = [
+                tg.nn.aggr.AttentionalAggregation(self.attention_gate[i])
+                for i in range(n_layers)
+            ]
+        else:
+            self.attention_gate = None
+            aggr = [aggr] * n_layers
+
+        self.layers_message = nn.ModuleList([
+            painn.MessagePassingPaiNN(
+                n_hidden_channels, n_bases, cutoff, cutoff_l, aggr[i],
+            ) for i in range(n_layers)
+        ])
+        self.layers_update = nn.ModuleList([
+            painn.UpdatePaiNN(n_hidden_channels)
+            for i in range(n_layers)
+        ])
+
+        self.W_out = nn.ModuleList([
+            nn.Linear(n_hidden_channels, n_hidden_channels // 2),
+            nn.SiLU(),
+            nn.Linear(n_hidden_channels // 2, n_out)
+        ])
+
+        self._w_out_after_sum = w_out_after_sum
+
+        self.reset_parameters()
+
+    def reset_parameters(self) -> None:
+        """
+        Resets all learnable parameters of the module.
+        """
+        self.W_v.reset_parameters()
+
+        for layer in self.layers_message:
+            layer.reset_parameters()
+        for layer in self.layers_update:
+            layer.reset_parameters()
+
+        if isinstance(self.attention_gate, painn.AttentionGatePaiNN):
+            self.attention_gate.reset_parameters()
+        elif isinstance(self.attention_gate, nn.ModuleList):
+            for gate in self.attention_gate:
+                gate.reset_parameters()
+
+        nn.init.xavier_uniform_(self.W_out[0].weight)
+        self.W_out[0].bias.data.fill_(0)
+        nn.init.xavier_uniform_(self.W_out[2].weight)
+        self.W_out[2].bias.data.fill_(0)
+
+    def forward(
+        self, data: Dict[str, torch.Tensor], scatter_mean: bool = True
+    ) -> torch.Tensor:
+        """
+        The forward pass.
+
+        Parameters
+        ----------
+        data: Dict[str, torch.Tensor]
+            The data dict. Usually came from the `to_dict` method of a
+            `torch_geometric.data.Batch` object.
+        scatter_mean: bool
+            If perform the scatter mean to the model output.
+        """
+
+        h_E = self.embed_edge(data)
+        h_V_s = self.W_v(data['node_attrs'])
+        h_V_v = torch.zeros(
+            len(data['node_attrs']),
+            h_V_s.shape[1],
+            3,
+            dtype=data['node_attrs'].dtype,
+            device=data['node_attrs'].device,
+        )
+
+        batch_id = data['batch']
+
+        for message, update in zip(self.layers_message, self.layers_update):
+            s_temp, v_temp = message(
+                h_V_s,
+                h_V_v,
+                data['edge_index'],
+                h_E[0],
+                h_E[2],
+                h_E[1],
+                data.get('edge_masks_le'),
+            )
+            h_V_s, h_V_v = s_temp + h_V_s, v_temp + h_V_v
+            h_V_s, h_V_v = update(h_V_s, h_V_v)
+            h_V_s, h_V_v = s_temp + h_V_s, v_temp + h_V_v
+
+        if not self._w_out_after_sum:
+            for w in self.W_out:
+                h_V_s = w(h_V_s)
+        out = h_V_s
+
+        if scatter_mean:
+            if 'system_masks' not in data.keys():
+                out = torch_tools.scatter_mean(out, batch_id, dim=0)
+            else:
+                out = out * data['system_masks']
+                out = torch_tools.scatter_sum(out, batch_id, dim=0)
+                out = out / data['n_system']
+
+        if self._w_out_after_sum:
+            for w in self.W_out:
+                out = w(out)
+
+        return out
+
+    def forward_node_feature(
+        self, data: Dict[str, torch.Tensor]
+    ) -> torch.Tensor:
+        """
+        The forward pass without the readout function.
+
+        Parameters
+        ----------
+        data: Dict[str, torch.Tensor]
+            The data dict. Usually came from the `to_dict` method of a
+            `torch_geometric.data.Batch` object.
+        scatter_mean: bool
+            If perform the scatter mean to the model output.
+        """
+
+        h_E = self.embed_edge(data)
+        h_V_s = self.W_v(data['node_attrs'])
+        h_V_v = torch.zeros(
+            len(data['node_attrs']),
+            h_V_s.shape[1],
+            3,
+            dtype=data['node_attrs'].dtype,
+            device=data['node_attrs'].device,
+        )
+
+        for message, update in zip(self.layers_message, self.layers_update):
+            s_temp, v_temp = message(
+                h_V_s,
+                h_V_v,
+                data['edge_index'],
+                h_E[0],
+                h_E[2],
+                h_E[1],
+                data.get('edge_masks_le'),
+            )
+            h_V_s, h_V_v = s_temp + h_V_s, v_temp + h_V_v
+            h_V_s, h_V_v = update(h_V_s, h_V_v)
+            h_V_s, h_V_v = s_temp + h_V_s, v_temp + h_V_v
+
+        return h_V_s
 
 
 class SchNetModel(BaseModel):
@@ -691,6 +925,16 @@ def test_schnet_2() -> None:
         ) < 1E-12
     ).all()
 
+    result = model.forward_node_feature(data)[:3, :].mean(dim=0, keepdim=True)
+    for w in model.W_out:
+        result = w(result)
+    assert (
+        torch.abs(
+            result -
+            torch.tensor([[0.3654537816221449, -0.0748265132499575]])
+        ) < 1E-12
+    ).all()
+
 
 def test_schnet_3() -> None:
     torch.manual_seed(0)
@@ -728,9 +972,45 @@ def test_schnet_3() -> None:
     ).all()
 
 
+def test_painn() -> None:
+    torch.manual_seed(0)
+    torch_tools.set_default_dtype('float64')
+
+    model = PaiNNModel(
+        n_out=2,
+        cutoff=0.1,
+        atomic_numbers=[1, 8],
+        n_bases=6,
+        n_layers=2,
+        n_hidden_channels=12,
+        w_out_after_sum=True,
+        basis_type='gaussian',
+        aggr='attention_separate',
+    )
+
+    data = test_get_data().to_dict()
+    assert (
+        torch.abs(
+            model(data) -
+            torch.tensor([[-0.014263778030142952, -0.012654239687045616]] * 6)
+        ) < 1E-12
+    ).all()
+
+    result = model.forward_node_feature(data)[:3, :].mean(dim=0, keepdim=True)
+    for w in model.W_out:
+        result = w(result)
+    assert (
+        torch.abs(
+            result -
+            torch.tensor([[-0.014263778030142952, -0.012654239687045616]])
+        ) < 1E-12
+    ).all()
+
+
 if __name__ == '__main__':
     test_gvp()
     test_gvp_1()
+    test_painn()
     test_schnet_1()
     test_schnet_2()
     test_schnet_3()

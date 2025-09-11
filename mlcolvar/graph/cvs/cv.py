@@ -216,21 +216,22 @@ class GraphBaseCV(lightning.LightningModule):
         Example data.
         """
         numbers = self._model.atomic_numbers.cpu().numpy().tolist()
-        positions = np.random.randn(2, len(numbers), 3)
+        positions = np.ones((len(numbers), 3))
+        positions = positions * np.arange(len(numbers)).reshape((-1, 1)) * 0.05
         cell = np.identity(3, dtype=float) * 0.2
-        graph_labels = np.array([[[0]], [[1]]])
+        graph_labels = np.array([[0]])
         node_labels = np.array([[0]] * len(numbers))
         z_table = gdata.atomic.AtomicNumberTable.from_zs(numbers)
 
         config = [
             gdata.atomic.Configuration(
                 atomic_numbers=numbers,
-                positions=positions[i],
+                positions=positions,
                 cell=cell,
                 pbc=[True] * 3,
                 node_labels=node_labels,
-                graph_labels=graph_labels[i],
-            ) for i in range(2)
+                graph_labels=graph_labels,
+            )
         ]
         dataset = gdata.create_dataset_from_configurations(
             config, z_table, 0.1, show_progress=False
