@@ -18,7 +18,8 @@ __all__ = [
     'create_dataset_from_configurations',
     'save_dataset',
     'save_dataset_as_exyz',
-    'load_dataset'
+    'load_dataset',
+    'cat_dataset',
 ]
 
 
@@ -323,6 +324,38 @@ def create_dataset_from_configurations(
     dataset = GraphDataSet(data_list, z_table.zs, cutoff, cutoff_l)
 
     return dataset
+
+
+def cat_dataset(datasets: List[GraphDataSet]) -> GraphDataSet:
+    """
+    Concatenate multiple datasets.
+
+    Parameters
+    ----------
+    datasets: List[GraphDataSet]
+        The datasets.
+    """
+    d0 = datasets[0]
+    same_cutoffs = all(d.cutoff == d0.cutoff for d in datasets)
+    same_cutoffs_l = all(d.cutoff_l == d0.cutoff_l for d in datasets)
+    same_numbers = all(d.atomic_numbers == d0.atomic_numbers for d in datasets)
+
+    assert same_cutoffs, (
+        'Cutoff radii are different in different datasets!'
+    )
+    assert same_cutoffs_l, (
+        'Long cutoff radii are different in different datasets!'
+    )
+    assert same_numbers, (
+        'Atomic Numbers are different in different datasets!'
+    )
+
+    return GraphDataSet(
+        [dd for d in datasets for dd in d],
+        atomic_numbers=d0.atomic_numbers,
+        cutoff=d0.cutoff,
+        cutoff_l=d0.cutoff_l
+    )
 
 
 def save_dataset(dataset: GraphDataSet, file_name: str) -> None:
@@ -1006,8 +1039,72 @@ def test_from_configurations_long_cutoff() -> None:
     ).all()
 
 
+def test_cat_dataset() -> None:
+    numbers = [8, 1, 1]
+    positions = np.array(
+        [[0.0, 0.0, 0.0], [0.07, 0.07, 0.0], [0.07, -0.07, 0.0]],
+        dtype=float
+    )
+    cell = np.identity(3, dtype=float) * 0.2
+    graph_labels = [np.array([[1]]) * i for i in range(6)]
+    node_labels = np.array([[0], [1], [1]])
+    z_table = atomic.AtomicNumberTable.from_zs(numbers)
+
+    config = [
+        atomic.Configuration(
+            atomic_numbers=numbers,
+            positions=positions,
+            cell=cell,
+            pbc=[True] * 3,
+            node_labels=node_labels,
+            graph_labels=lable,
+        )
+        for lable in graph_labels
+    ]
+    dataset = create_dataset_from_configurations(
+        config, z_table, 0.1, remove_isolated_nodes=True, show_progress=False
+    )
+
+    dataset = cat_dataset([dataset, dataset])
+    assert [d.graph_labels[0, 0] for d in dataset] == [0, 1, 2, 3, 4, 5] * 2
+
+    graph_labels = [np.array([[1]]) * (i + 6) for i in range(6)]
+    config = [
+        atomic.Configuration(
+            atomic_numbers=numbers,
+            positions=positions,
+            cell=cell,
+            pbc=[True] * 3,
+            node_labels=node_labels,
+            graph_labels=lable,
+        )
+        for lable in graph_labels
+    ]
+    dataset_1 = create_dataset_from_configurations(
+        config, z_table, 0.1, remove_isolated_nodes=True, show_progress=False
+    )
+
+    dataset = cat_dataset([dataset, dataset_1, dataset])
+    assert [d.graph_labels[0, 0] for d in dataset] == (
+            [0, 1, 2, 3, 4, 5] * 2
+            + [6, 7, 8, 9, 10, 11]
+            + [0, 1, 2, 3, 4, 5] * 2
+    )
+
+    dataset_1 = create_dataset_from_configurations(
+        config, z_table, 0.2, remove_isolated_nodes=True, show_progress=False
+    )
+    try:
+        dataset = cat_dataset([dataset, dataset_1])
+    except Exception:
+        pass
+    else:
+        raise Exception()
+
+
 if __name__ == '__main__':
     test_from_configuration()
     test_from_configurations()
     test_from_configuration_long_cutoff()
     test_from_configurations_long_cutoff()
+    test_cat_dataset()

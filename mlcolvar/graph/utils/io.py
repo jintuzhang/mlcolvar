@@ -1,6 +1,7 @@
 import torch
 import numpy as np
 import mdtraj as md
+import multiprocessing as mp
 import collections
 from typing import Union, List, Tuple
 
@@ -27,7 +28,8 @@ def create_dataset_from_trajectories(
     subsystem_selection: str = None,
     return_trajectories: bool = False,
     remove_isolated_nodes: bool = True,
-    show_progress: bool = True
+    show_progress: bool = True,
+    n_workers: int = 1,
 ) -> Union[
     gdata.GraphDataSet,
     Tuple[
@@ -136,6 +138,8 @@ def create_dataset_from_trajectories(
     )
     # fmt: on
 
+    assert n_workers > 0, 'Number of workers should be positive!'
+
     for i in range(len(trajectories)):
         assert type(trajectories[i]) is type(top[i]), (
             'Each element of `trajectories` and `top` parameters '
@@ -168,7 +172,7 @@ def create_dataset_from_trajectories(
                 md.load(trajectories[i][j], top=top[i][j])
                 for j in range(len(trajectories[i]))
             ]
-            for j,t in enumerate(traj):
+            for j, t in enumerate(traj):
                 t.top = md.core.trajectory.load_topology(top[i][j])
             if selection is not None:
                 for j in range(len(traj)):
@@ -218,15 +222,41 @@ def create_dataset_from_trajectories(
             )
             configurations.extend(configuration)
 
-    dataset = gdata.create_dataset_from_configurations(
-        configurations,
-        z_table,
-        cutoff,
-        buffer,
-        cutoff_l,
-        remove_isolated_nodes,
-        show_progress
-    )
+    if n_workers > 1:
+        pool = mp.Pool(processes=n_workers)
+        indices = np.array_split(range(len(configurations)), n_workers)
+        pool.map(
+            _create_dataset_from_configurations_wrapper,
+            zip(
+                [
+                    (
+                        [configuration[ii] for ii in i],
+                        z_table,
+                        cutoff,
+                        buffer,
+                        cutoff_l,
+                        remove_isolated_nodes,
+                        show_progress,
+                    )
+                    for i in indices
+                ],
+                list(range(n_workers))
+            )
+        )
+
+        dataset = gdata.cat_dataset([
+            torch.load('.MGTEMP.{:d}.pt'.format(i)) for i in range(n_workers)
+        ])
+    else:
+        dataset = gdata.create_dataset_from_configurations(
+            configurations,
+            z_table,
+            cutoff,
+            buffer,
+            cutoff_l,
+            remove_isolated_nodes,
+            show_progress,
+        )
 
     if return_trajectories:
         return dataset, trajectories_in_memory
@@ -346,6 +376,14 @@ def _configures_from_trajectory(
         configurations.append(configuration)
 
     return configurations
+
+
+def _create_dataset_from_configurations_wrapper(args) -> None:
+    """
+    Wrapper function to `create_dataset_from_configurations`.
+    """
+    d = gdata.create_dataset_from_configurations(*(args[0]))
+    gdata.save_dataset(d, '.MGTEMP.{:d}.pt'.format(args[1]))
 
 
 def test_create_dataset_from_trajectories(
