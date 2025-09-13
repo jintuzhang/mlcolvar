@@ -245,6 +245,7 @@ def create_dataset_from_trajectories(
                 list(range(n_workers))
             )
         )
+        pool.close()
 
         if show_progress:
             items = progress.pbar(
