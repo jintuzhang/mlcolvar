@@ -232,7 +232,7 @@ def create_dataset_from_trajectories(
             zip(
                 [
                     (
-                        [configuration[ii] for ii in i],
+                        [configurations[ii] for ii in i],
                         z_table,
                         cutoff,
                         buffer,
