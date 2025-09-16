@@ -1,3 +1,4 @@
+import time
 import torch
 import lightning
 import numpy as np
@@ -77,6 +78,7 @@ class GraphBaseCV(lightning.LightningModule):
         self.register_buffer(
             'atomic_numbers', torch.tensor(atomic_numbers, dtype=torch.int64)
         )
+        self.training_time = time.strftime('UTC%z %Y-%b-%d %H:%M:%S')
 
         for key in ['cutoff', 'atomic_numbers']:
             model_options.pop(key, None)
@@ -169,6 +171,12 @@ class GraphBaseCV(lightning.LightningModule):
         `self.training` variable.
         """
         return self.training_step(*args, **kwargs)
+
+    def training_epoch_end(self, *args, **kwargs) -> None:
+        """
+        Update the model attribute at the end of each epoch.
+        """
+        self.training_time = time.strftime('UTC%z %Y-%b-%d %H:%M:%S')
 
     @property
     def optimizer_name(self) -> str:
