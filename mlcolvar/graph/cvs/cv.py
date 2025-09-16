@@ -172,7 +172,7 @@ class GraphBaseCV(lightning.LightningModule):
         """
         return self.training_step(*args, **kwargs)
 
-    def training_epoch_end(self, *args, **kwargs) -> None:
+    def on_train_epoch_end(self, *args, **kwargs) -> None:
         """
         Update the model attribute at the end of each epoch.
         """
