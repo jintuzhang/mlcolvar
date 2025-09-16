@@ -78,7 +78,9 @@ class GraphBaseCV(lightning.LightningModule):
         self.register_buffer(
             'atomic_numbers', torch.tensor(atomic_numbers, dtype=torch.int64)
         )
-        self.training_time = time.strftime('UTC%z %Y-%b-%d %H:%M:%S')
+        self.register_buffer(
+            'training_time', torch.tensor(self._get_time(), dtype=torch.int64)
+        )
 
         for key in ['cutoff', 'atomic_numbers']:
             model_options.pop(key, None)
@@ -135,6 +137,24 @@ class GraphBaseCV(lightning.LightningModule):
         if lr_scheduler_kwargs is not None:
             self.lr_scheduler_kwargs.update(lr_scheduler_kwargs)
 
+    def _get_time(self) -> List[int]:
+        """
+        Get local timestamp.
+        """
+        ts = time.localtime()
+
+        t = [
+            ts.tm_gmtoff // 60 // 60,
+            ts.tm_year,
+            ts.tm_mon,
+            ts.tm_mday,
+            ts.tm_hour,
+            ts.tm_min,
+            ts.tm_sec,
+        ]
+
+        return t
+
     def forward(
         self,
         data: Dict[str, torch.Tensor],
@@ -176,7 +196,11 @@ class GraphBaseCV(lightning.LightningModule):
         """
         Update the model attribute at the end of each epoch.
         """
-        self.training_time = time.strftime('UTC%z %Y-%b-%d %H:%M:%S')
+        self.training_time[:] = torch.tensor(
+            self._get_time(),
+            dtype=torch.int64,
+            device=self.training_time.device
+        )
 
     @property
     def optimizer_name(self) -> str:
