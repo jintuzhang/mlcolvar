@@ -10,7 +10,7 @@ The PaiNN components. This module is directly taken from repo:
 https://github.com/MaxH1996/PaiNN-in-PyG
 """
 
-__all__ = ['MessagePassingPaiNN', 'UpdatePaiNN', 'AttentionGatePaiNN']
+# __all__ = ['MessagePassingPaiNN', 'UpdatePaiNN', 'AttentionGatePaiNN']
 
 
 class MessagePassingPaiNN(MessagePassing):
