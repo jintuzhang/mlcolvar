@@ -1,1 +1,4 @@
-from .models import BaseModel, GVPModel, SchNetModel
+from .models import BaseModel, GVPModel, SchNetModel, PaiNNModel
+
+
+__all__ = ['BaseModel', 'GVPModel', 'SchNetModel', 'PaiNNModel']

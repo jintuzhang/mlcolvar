@@ -15,7 +15,7 @@ from mlcolvar.graph.utils import torch_tools
 GNN models.
 """
 
-__all__ = ['BaseModel', 'GVPModel', 'SchNetModel']
+__all__ = ['BaseModel', 'GVPModel', 'SchNetModel', 'PaiNNModel']
 
 
 class BaseModel(nn.Module):
