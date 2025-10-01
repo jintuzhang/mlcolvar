@@ -81,6 +81,7 @@ class GraphCommittor(GraphBaseCV):
             'penalty_weight': 10.0,
             'z_threshold': 10.0,
             'n_bootstrap': 5,
+            'exclude_boundary_in_loss_v': False
         },
         optimizer_options: Dict[Any, Any] = {},
         **kwargs,
@@ -116,6 +117,9 @@ class GraphCommittor(GraphBaseCV):
             alpha=float(extra_loss_options.get('alpha', 1.0)),
             gamma=float(extra_loss_options.get('gamma', 10000.0)),
             delta_f=float(extra_loss_options.get('delta_f', 0.0)),
+            exclude_boundary_in_loss_v=bool(
+                extra_loss_options.get('exclude_boundary_in_loss_v', False)
+            ),
         )
         self._z_threshold = float(
             extra_loss_options.get('z_threshold', 10.0)

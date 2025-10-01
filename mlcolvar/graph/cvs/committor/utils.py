@@ -36,6 +36,8 @@ class GraphCommittorLoss(torch.nn.Module):
     delta_f : float
         Delta free energy between A (label 0) and B (label 1), units is kBT,
         by default 0. State B is supposed to be higher in energy.
+    exclude_boundary_in_loss_v : bool
+        Do not include the boundary conformations in the variational loss.
 
     See Also
     --------
@@ -48,7 +50,8 @@ class GraphCommittorLoss(torch.nn.Module):
         atomic_masses: torch.Tensor,
         alpha: float,
         gamma: float = 10000.0,
-        delta_f: float = 0.0
+        delta_f: float = 0.0,
+        exclude_boundary_in_loss_v: bool = False,
     ) -> None:
         super().__init__()
         atomic_masses = torch.tensor(
@@ -58,6 +61,7 @@ class GraphCommittorLoss(torch.nn.Module):
         self.alpha = alpha
         self.gamma = gamma
         self.delta_f = delta_f
+        self.exclude_boundary_in_loss_v = exclude_boundary_in_loss_v
 
     def forward(
         self,
@@ -82,7 +86,8 @@ class GraphCommittorLoss(torch.nn.Module):
             alpha=self.alpha,
             gamma=self.gamma,
             delta_f=self.delta_f,
-            create_graph=create_graph
+            create_graph=create_graph,
+            exclude_boundary_in_loss_v=self.exclude_boundary_in_loss_v
         )
 
 
@@ -94,6 +99,7 @@ def graph_committor_loss(
     gamma: float = 10000.0,
     delta_f: float = 0.0,
     create_graph: bool = True,
+    exclude_boundary_in_loss_v: bool = False,
 ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     """
     Compute variational loss for committor optimization with boundary
@@ -117,6 +123,8 @@ def graph_committor_loss(
         Delta free energy between A (label 0) and B (label 1), units is kBT.
     create_graph : bool
         Make loss backwardable, deactivate for validation to save memory.
+    exclude_boundary_in_loss_v : bool
+        Do not include the boundary conformations in the variational loss.
 
     Returns
     -------
@@ -144,6 +152,7 @@ def graph_committor_loss(
     labels = data['graph_labels'].long().squeeze()
     mask_a = labels == 0
     mask_b = labels == 1
+    mask_v = ~mask_a & ~mask_b
 
     # Update weights of basin B using the information on the delta_f
     weights = data['weight'].clone()
@@ -188,7 +197,10 @@ def graph_committor_loss(
         gradients_atomic, data['batch'], dim=0
     )  # [n_graphs, 1]
     # ensemble avg.
-    loss_v = torch.mean((gradients_batch * weights))  # [,]
+    if exclude_boundary_in_loss_v:
+        loss_v = torch.mean((gradients_batch * weights)[mask_v])  # [,]
+    else:
+        loss_v = torch.mean((gradients_batch * weights))  # [,]
 
     # boundary conditions
     loss_a = torch.mean(torch.pow(q[mask_a], 2))
