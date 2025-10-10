@@ -3,6 +3,7 @@ import torch_geometric as tg
 from typing import Dict, Any, List
 
 from mlcolvar.core.stats import TICA
+from mlcolvar.core.nn.utils import Custom_Sigmoid
 from mlcolvar.core.loss import ReduceEigenvaluesLoss
 from mlcolvar.graph.cvs import GraphBaseCV
 from mlcolvar.graph.cvs.cv import test_get_data
@@ -66,6 +67,7 @@ class GraphDeepTICA(GraphBaseCV):
     mlcolvar.utils.timelagged.create_timelagged_dataset
         Create dataset of time-lagged data.
     """
+
     def __init__(
         self,
         n_cvs: int,
@@ -74,7 +76,9 @@ class GraphDeepTICA(GraphBaseCV):
         cutoff_l: float = -1.0,
         model_name: str = 'GVPModel',
         model_options: Dict[Any, Any] = {'n_out': 6},
-        extra_loss_options: Dict[Any, Any] = {'mode': 'sum2', 'n_eig': 0},
+        extra_loss_options: Dict[Any, Any] = {
+            'mode': 'sum2', 'n_eig': 0, 'use_sigmoid': False,
+        },
         optimizer_options: Dict[Any, Any] = {},
         **kwargs,
     ) -> None:
@@ -97,6 +101,10 @@ class GraphDeepTICA(GraphBaseCV):
             model_options,
             **kwargs
         )
+
+        self._use_sigmoid = extra_loss_options.pop('use_sigmoid', False)
+        if self._use_sigmoid:
+            self.sigmoid = Custom_Sigmoid(p=3)
 
         self.loss_fn = ReduceEigenvaluesLoss(**extra_loss_options)
 
@@ -144,6 +152,30 @@ class GraphDeepTICA(GraphBaseCV):
 
         return outputs
 
+    def forward_eigenfunctions(
+        self,
+        data: Dict[str, torch.Tensor],
+        token: bool = False
+    ) -> torch.Tensor:
+        """
+        The forward pass to get the eigenfunctions. This is identical to the
+        `forword` method when `use_sigmoid` is not enabled.
+
+        Parameters
+        ----------
+        data: Dict[str, torch.Tensor]
+            The data dict. Usually came from the `to_dict` method of a
+            `torch_geometric.data.Batch` object.
+        token: bool
+            To be used.
+        """
+        nn_outputs = self.forward_nn(data)
+        if self._use_sigmoid:
+            nn_outputs = self.sigmoid(nn_outputs)
+        outputs = self.tica(nn_outputs)
+
+        return outputs
+
     def training_step(
         self,
         train_batch: Dict[str, tg.data.Batch],
@@ -163,6 +195,10 @@ class GraphDeepTICA(GraphBaseCV):
 
         nn_outputs_t = self.forward_nn(data_t)
         nn_outputs_lag = self.forward_nn(data_lag)
+
+        if self._use_sigmoid:
+            nn_outputs_t = self.sigmoid(nn_outputs_t)
+            nn_outputs_lag = self.sigmoid(nn_outputs_lag)
 
         eigvals, _ = self.tica.compute(
             data=[nn_outputs_t, nn_outputs_lag],
