@@ -135,7 +135,9 @@ class MessagePassingPaiNN(MessagePassing):
 
         # Split
 
-        left, dsm, right = torch.split(phi * W, self.n_hidden_channels, dim=-1)
+        left, dsm, right = torch.split(
+            phi * W * C.view(-1, 1), self.n_hidden_channels, dim=-1
+        )
 
         # v_j channel
         v_j = v_j.reshape(-1, flat_shape_v // 3, 3)
@@ -144,7 +146,7 @@ class MessagePassingPaiNN(MessagePassing):
         dvm = (hadamard_left + hadamard_right).flatten(-2)
 
         # Prepare vector for update
-        x_j = torch.cat((dsm, dvm), dim=-1) * C.view(-1, 1)
+        x_j = torch.cat((dsm, dvm), dim=-1)
 
         return x_j
 

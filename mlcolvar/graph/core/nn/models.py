@@ -357,9 +357,9 @@ class PaiNNModel(BaseModel):
         n_layers: int = 2,
         n_hidden_channels: int = 16,
         drop_rate: int = 0.0,
-        aggr: str = 'mean',
+        aggr: str = 'add',
         w_out_after_sum: bool = True,
-        basis_type: str = 'gaussian',
+        basis_type: str = 'bessel',
     ) -> None:
 
         super().__init__(
@@ -376,22 +376,16 @@ class PaiNNModel(BaseModel):
             len(atomic_numbers), n_hidden_channels, bias=False
         )
 
+        # TODO: find out how to do attentional aggr properly.
         if aggr in ['attention', 'attentional']:
-            self.attention_gate = painn.AttentionGatePaiNN(n_hidden_channels)
-            aggr = [
-                tg.nn.aggr.AttentionalAggregation(self.attention_gate)
-            ] * n_layers
+            raise NotImplementedError(
+                'Attentional aggregation is not implementated for PaiNN.'
+            )
         elif aggr in ['attention_separate', 'attentional_separate']:
-            self.attention_gate = nn.ModuleList([
-                painn.AttentionGatePaiNN(n_hidden_channels)
-                for _ in range(n_layers)
-            ])
-            aggr = [
-                tg.nn.aggr.AttentionalAggregation(self.attention_gate[i])
-                for i in range(n_layers)
-            ]
+            raise NotImplementedError(
+                'Attentional aggregation is not implementated for PaiNN.'
+            )
         else:
-            self.attention_gate = None
             aggr = [aggr] * n_layers
 
         self.layers_message = nn.ModuleList([
@@ -424,12 +418,6 @@ class PaiNNModel(BaseModel):
             layer.reset_parameters()
         for layer in self.layers_update:
             layer.reset_parameters()
-
-        if isinstance(self.attention_gate, painn.AttentionGatePaiNN):
-            self.attention_gate.reset_parameters()
-        elif isinstance(self.attention_gate, nn.ModuleList):
-            for gate in self.attention_gate:
-                gate.reset_parameters()
 
         nn.init.xavier_uniform_(self.W_out[0].weight)
         self.W_out[0].bias.data.fill_(0)
@@ -985,14 +973,13 @@ def test_painn() -> None:
         n_hidden_channels=12,
         w_out_after_sum=True,
         basis_type='gaussian',
-        aggr='attention_separate',
     )
 
     data = test_get_data().to_dict()
     assert (
         torch.abs(
             model(data) -
-            torch.tensor([[-0.014263778030142952, -0.012654239687045616]] * 6)
+            torch.tensor([[0.012601337298479546, -0.0032668391572678087]] * 6)
         ) < 1E-12
     ).all()
 
@@ -1002,7 +989,7 @@ def test_painn() -> None:
     assert (
         torch.abs(
             result -
-            torch.tensor([[-0.014263778030142952, -0.012654239687045616]])
+            torch.tensor([[0.012601337298479546, -0.0032668391572678087]])
         ) < 1E-12
     ).all()
 
