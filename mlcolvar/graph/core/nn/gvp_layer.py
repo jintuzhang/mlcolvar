@@ -238,12 +238,17 @@ class GVPConv(MessagePassing):
             c = 0.5 * (torch.cos(lens * math.pi / self.cutoff) + 1.0)
             if edge_masks_le is not None:
                 assert self.cutoff_l > self.cutoff
-                c_l = 0.5 * torch.cos(lens * math.pi / self.cutoff_l) + 0.5
-                c_l_1 = 0.5 - 0.5 * torch.cos(lens * math.pi / self.cutoff)
+
+                indices_l = edge_masks_le.nonzero()[:, 0]
+                lens_l = edge_lengths[indices_l]
+
+                c_l = 0.5 * torch.cos(lens_l * math.pi / self.cutoff_l) + 0.5
+                c_l_1 = 0.5 - 0.5 * torch.cos(lens_l * math.pi / self.cutoff)
                 c_l = c_l * (
-                    c_l_1 * (lens < self.cutoff) + 1.0 * (lens > self.cutoff)
+                    c_l_1 * (lens_l < self.cutoff)
+                    + 1.0 * (lens_l > self.cutoff)
                 )
-                c = c * ~edge_masks_le + c_l * edge_masks_le
+                c = c.index_copy_(0, indices_l, c_l)
             message_merged = message_merged * c.view(-1, 1)
         return message_merged
 

@@ -121,14 +121,18 @@ class CFConv(MessagePassing):
             assert self.network_l is not None
             assert self.cutoff_l > self.cutoff
 
-            C_l = 0.5 * torch.cos(edge_weight * math.pi / self.cutoff_l) + 0.5
-            C_l_1 = 0.5 - 0.5 * torch.cos(edge_weight * math.pi / self.cutoff)
+            indices_l = edge_masks_le.nonzero()[:, 0]
+            lengths_l = edge_weight[indices_l]
+            edge_attr_l = edge_attr[indices_l]
+
+            C_l = 0.5 * torch.cos(lengths_l * math.pi / self.cutoff_l) + 0.5
+            C_l_1 = 0.5 - 0.5 * torch.cos(lengths_l * math.pi / self.cutoff)
             C_l = C_l * (
-                C_l_1 * (edge_weight < self.cutoff)  # le shorter than cutoff
-                + 1.0 * (edge_weight > self.cutoff)  # le longer than cutoff
+                C_l_1 * (lengths_l < self.cutoff)  # le shorter than cutoff
+                + 1.0 * (lengths_l > self.cutoff)  # le longer than cutoff
             )
-            W_l = self.network_l(edge_attr) * C_l.view(-1, 1)
-            W = W * ~edge_masks_le + W_l * edge_masks_le
+            W_l = self.network_l(edge_attr_l) * C_l.view(-1, 1)
+            W = W.index_copy_(0, indices_l, W_l)
 
         x = self.lin1(x)
         x = self.propagate(edge_index, x=x, W=W)

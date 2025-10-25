@@ -78,9 +78,13 @@ class GaussianBasis(torch.nn.Module):
 
             dist = x.view(-1, 1) - self.offset.view(1, -1)
             values = torch.exp(self.coeff * torch.pow(dist, 2))
-            dist_l = x.view(-1, 1) - self.offset_l.view(1, -1)
+
+            indices_l = edge_masks_le.nonzero()[:, 0]
+            x_l = x[indices_l]
+            dist_l = x_l.view(-1, 1) - self.offset_l.view(1, -1)
             values_l = torch.exp(self.coeff_l * torch.pow(dist_l, 2))
-            return values * ~edge_masks_le + values_l * edge_masks_le
+
+            return values.index_copy_(0, indices_l, values_l)
 
     def __repr__(self) -> str:
         result = 'GAUSSIANBASIS [ '
@@ -193,9 +197,13 @@ class BesselBasis(torch.nn.Module):
 
             numerator = torch.sin(self.bessel_weights * x)
             values = self.prefactor * (numerator / x)
-            numerator_l = torch.sin(self.bessel_weights_l * x)
-            values_l = self.prefactor_l * (numerator_l / x)
-            return values * ~edge_masks_le + values_l * edge_masks_le
+
+            indices_l = edge_masks_le.nonzero()[:, 0]
+            x_l = x[indices_l]
+            numerator_l = torch.sin(self.bessel_weights_l * x_l)
+            values_l = self.prefactor_l * (numerator_l / x_l)
+
+            return values.index_copy_(0, indices_l, values_l)
 
     def __repr__(self) -> str:
         result = 'BESSELBASIS [ '

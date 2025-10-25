@@ -994,10 +994,57 @@ def test_painn() -> None:
     ).all()
 
 
+def test_painn_2() -> None:
+    torch.manual_seed(0)
+    torch_tools.set_default_dtype('float64')
+
+    model_o = PaiNNModel(
+        n_out=2,
+        cutoff=0.1,
+        atomic_numbers=[1, 8],
+        n_bases=6,
+        n_layers=2,
+        n_hidden_channels=12,
+        w_out_after_sum=True,
+        basis_type='gaussian',
+    )
+    model = PaiNNModel(
+        n_out=2,
+        cutoff=0.1,
+        cutoff_l=0.2,
+        atomic_numbers=[1, 8],
+        n_bases=6,
+        n_layers=2,
+        n_hidden_channels=12,
+        w_out_after_sum=True,
+        basis_type='gaussian',
+    )
+    tmp = model._radial_embedding
+    model._radial_embedding = None
+    model.load_state_dict(model_o.state_dict(), strict=False)
+    model._radial_embedding = tmp
+
+    data = test_get_data().to_dict()
+    data['edge_masks_le'] = torch.zeros(
+        ((data['edge_index'].shape[1]), 1), dtype=bool
+    )
+    data['edge_masks_le'][:-6] = True
+    assert (
+        torch.abs(
+            model(data) -
+            torch.tensor(
+                [[0.001191944969713134, -0.0078416956075128730]] * 5
+                + [[0.012601337298479546, -0.0032668391572678087]]
+            )
+        ) < 1E-12
+    ).all()
+
+
 if __name__ == '__main__':
     test_gvp()
     test_gvp_1()
     test_painn()
+    test_painn_2()
     test_schnet_1()
     test_schnet_2()
     test_schnet_3()

@@ -88,16 +88,20 @@ class MessagePassingPaiNN(MessagePassing):
             assert self.cutoff_l > self.cutoff
             assert self.lin_rbf_l is not None
 
-            W_l = self.lin_rbf_l(edge_attr)
-            W = W * ~edge_masks_le + W_l * edge_masks_le
+            indices_l = edge_masks_le.nonzero()[:, 0]
+            lengths_l = edge_lengths[indices_l]
+            edge_attr_l = edge_attr[indices_l]
 
-            C_l = 0.5 * torch.cos(edge_lengths * math.pi / self.cutoff_l) + 0.5
-            C_l_1 = 0.5 - 0.5 * torch.cos(edge_lengths * math.pi / self.cutoff)
+            W_l = self.lin_rbf_l(edge_attr_l)
+            W = W.index_copy_(0, indices_l, W_l)
+
+            C_l = 0.5 * torch.cos(lengths_l * math.pi / self.cutoff_l) + 0.5
+            C_l_1 = 0.5 - 0.5 * torch.cos(lengths_l * math.pi / self.cutoff)
             C_l = C_l * (
-                C_l_1 * (edge_lengths < self.cutoff)
-                + 1.0 * (edge_lengths > self.cutoff)
+                C_l_1 * (lengths_l < self.cutoff)
+                + 1.0 * (lengths_l > self.cutoff)
             )
-            C = C * ~edge_masks_le + C_l * edge_masks_le
+            C = C.index_copy_(0, indices_l, C_l)
 
         x = torch.cat([s, v], dim=-1)
 
