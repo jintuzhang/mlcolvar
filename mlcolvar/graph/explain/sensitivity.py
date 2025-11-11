@@ -52,12 +52,19 @@ def graph_node_sensitivity(
     mlcolvar.utils.explain.sensitivity_analysis
         Perform the sensitivity analysis of a feedforward model.
     """
+
+    try:
+        device_org = model.device
+    except AttributeError:
+        device_org = None
+
     model = model.to(device)
 
     gradients = get_dataset_cv_gradients(
         model,
         dataset,
         component,
+        device,
         batch_size,
         show_progress,
         'Getting gradients'
@@ -77,5 +84,8 @@ def graph_node_sensitivity(
         )
         results['sensitivities'] = None
     results['sensitivities_components'] = sensitivities_components
+
+    if device_org is not None:
+        model = model.to(device_org)
 
     return results

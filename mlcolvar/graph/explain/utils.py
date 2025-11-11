@@ -16,6 +16,7 @@ Analysis utils.
 def get_dataset_cv_values(
     model: gcvs.GraphBaseCV,
     dataset: gdata.GraphDataSet,
+    device: str = 'cpu',
     batch_size: int = None,
     show_progress: bool = True,
     progress_prefix: str = 'Calculating CV values'
@@ -45,7 +46,6 @@ def get_dataset_cv_values(
     datamodule.setup()
 
     cv_values = []
-    device = next(model.parameters()).device
 
     if show_progress:
         items = gutils.progress.pbar(
@@ -69,6 +69,7 @@ def get_dataset_cv_gradients(
     model: gcvs.GraphBaseCV,
     dataset: gdata.GraphDataSet,
     component: int = 0,
+    device: str = 'cpu',
     batch_size: int = None,
     show_progress: bool = True,
     progress_prefix: str = 'Calculating CV gradients'
@@ -100,7 +101,6 @@ def get_dataset_cv_gradients(
     datamodule.setup()
 
     cv_value_gradients = []
-    device = next(model.parameters()).device
 
     if show_progress:
         items = gutils.progress.pbar(
