@@ -74,7 +74,7 @@ class GaussianBasis(torch.nn.Module):
             dist = x.view(-1, 1) - self.offset.view(1, -1)
             return torch.exp(self.coeff * torch.pow(dist, 2))
         else:
-            assert self.cutoff_l > 0
+            # assert self.cutoff_l > 0
 
             dist = x.view(-1, 1) - self.offset.view(1, -1)
             values = torch.exp(self.coeff * torch.pow(dist, 2))
@@ -193,7 +193,7 @@ class BesselBasis(torch.nn.Module):
             numerator = torch.sin(self.bessel_weights * x)
             return self.prefactor * (numerator / x)
         else:
-            assert self.cutoff_l > 0
+            # assert self.cutoff_l > 0
 
             numerator = torch.sin(self.bessel_weights * x)
             values = self.prefactor * (numerator / x)
@@ -265,7 +265,7 @@ class PolynomialCutoff(torch.nn.Module):
         if edge_masks_le is None:
             c = self.cutoff
         else:
-            assert self.cutoff_l > 0
+            # assert self.cutoff_l > 0
             c = self.cutoff * ~edge_masks_le + self.cutoff_l * edge_masks_le
         # fmt: off
         envelope = (

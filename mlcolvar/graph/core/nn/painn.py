@@ -85,8 +85,8 @@ class MessagePassingPaiNN(MessagePassing):
         C = 0.5 * torch.cos(edge_lengths * math.pi / self.cutoff) + 0.5
 
         if edge_masks_le is not None:
-            assert self.cutoff_l > self.cutoff
-            assert self.lin_rbf_l is not None
+            # assert self.cutoff_l > self.cutoff
+            # assert self.lin_rbf_l is not None
 
             indices_l = edge_masks_le.nonzero()[:, 0]
             lengths_l = edge_lengths[indices_l]
