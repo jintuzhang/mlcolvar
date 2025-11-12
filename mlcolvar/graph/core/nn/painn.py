@@ -210,7 +210,7 @@ class UpdatePaiNN(torch.nn.Module):
         UV = torch.einsum('ijk,ijk->ij', U, V)
 
         # s_j channel
-        nV = torch.norm(V, dim=-1)
+        nV = V.pow(2).sum(dim=-1).sqrt()
 
         s_u = torch.cat([s, nV], dim=-1)
         s_u = self.lin1(s_u)
