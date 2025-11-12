@@ -19,9 +19,12 @@ __all__ = ['export', 'load_exported']
 
 class ExportableCV(torch.nn.Module):
 
-    def __init__(self, model: LightningModule) -> None:
+    def __init__(
+        self, model: LightningModule, calculate_gradients: bool = True,
+    ) -> None:
         super().__init__()
         self._model = model
+        self._calculate_gradients = calculate_gradients
 
     def forward(
         self,
@@ -60,7 +63,10 @@ class ExportableCV(torch.nn.Module):
             )[0]
             gradients = gradients.unsqueeze(0)
 
-        results = {'values': outputs, 'gradients': gradients}
+        results = {
+            'values': outputs,
+            'gradients': gradients if self._calculate_gradients else None,
+        }
 
         return results
 
@@ -133,6 +139,7 @@ def export(
     model: LightningModule,
     example_inputs: tg.data.Data,
     file_name: str = 'model.pt2',
+    calculate_gradients: bool = True,
     n_nodes_max: Optional[int] = None,
     n_edges_max: Optional[int] = None,
 ) -> str:
@@ -150,7 +157,7 @@ def export(
     torch_tools.scatter_sum = _scatter_sum_static
     torch_tools.scatter_mean = _scatter_mean_static
 
-    exportable = ExportableCV(model)
+    exportable = ExportableCV(model, calculate_gradients)
 
     # token from: https://depyf.readthedocs.io/en/latest/walk_through.html
     def forward_and_backward(
