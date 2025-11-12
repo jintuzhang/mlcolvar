@@ -158,7 +158,7 @@ def export(
 
     exportable = ExportableCV(model, calculate_gradients)
 
-    # token from: https://depyf.readthedocs.io/en/latest/walk_through.html
+    # taken from: https://depyf.readthedocs.io/en/latest/walk_through.html
     def forward_and_backward(
         _inputs: Dict[str, torch.Tensor], kwargs: Dict[str, Any]
     ) -> Dict[str, torch.Tensor]:
