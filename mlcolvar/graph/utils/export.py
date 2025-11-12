@@ -7,7 +7,6 @@ from lightning import LightningModule
 from typing import Dict, Tuple, Optional, Any, List
 from torch.fx.experimental.proxy_tensor import make_fx
 
-
 from mlcolvar.graph.utils import torch_tools
 
 """
@@ -197,3 +196,173 @@ def load_exported(
     model = torch._inductor.aoti_load_package(file_name)
 
     return model
+
+
+def test_export_schnet() -> None:
+
+    torch.manual_seed(0)
+    torch_tools.set_default_dtype('float64')
+
+    model = __import__('mlcolvar').graph.core.nn.models.SchNetModel(
+        n_out=2,
+        cutoff=0.1,
+        atomic_numbers=[1, 8],
+        n_bases=6,
+        n_layers=2,
+        n_filters=16,
+        n_hidden_channels=16,
+        aggr='min',
+        w_out_after_sum=True
+    )
+    model.device = 'cpu'
+
+    batch = __import__('mlcolvar').graph.core.nn.models.test_get_data()
+    dataset = batch.to_data_list()[0]
+    loader = tg.loader.DataLoader(
+        [dataset], batch_size=1, shuffle=False,
+    )
+    data_dict = next(iter(loader)).to_dict()
+
+    export(
+        model,
+        example_inputs=batch.to_data_list()[0],
+        file_name='model.no_grad.pt2',
+        calculate_gradients=False,
+    )
+    model_c = load_exported('model.no_grad.pt2')
+
+    assert (
+        torch.abs(
+            model_c(data_dict)['values']
+            - torch.tensor([[0.3654537816221449, -0.0748265132499575]])
+        ) < 1E-12
+    ).all()
+
+    os.remove('model.no_grad.pt2')
+
+    export(
+        model,
+        example_inputs=batch.to_data_list()[0],
+        file_name='model.pt2',
+    )
+    model_c = load_exported('model.pt2')
+
+    data_dict['positions'].requires_grad_(True)
+    outputs = model(data_dict)
+    grad_outputs: Optional[List[Optional[torch.Tensor]]] = [
+        torch.tensor(1, device=outputs.device)
+    ]
+    gradients_1 = torch.autograd.grad(
+        [outputs[0, 0]],
+        [data_dict['positions']],
+        grad_outputs=grad_outputs,
+        retain_graph=True,
+        create_graph=False,
+    )[0]
+    gradients_2 = torch.autograd.grad(
+        [outputs[0, 1]],
+        [data_dict['positions']],
+        grad_outputs=grad_outputs,
+        retain_graph=True,
+        create_graph=False,
+    )[0]
+
+    assert (
+        torch.abs(
+            model_c(data_dict)['gradients'][0] - gradients_1
+        ) < 1E-12
+    ).all()
+    assert (
+        torch.abs(
+            model_c(data_dict)['gradients'][1] - gradients_2
+        ) < 1E-12
+    ).all()
+
+    os.remove('model.pt2')
+
+
+def test_export_painn() -> None:
+
+    torch.manual_seed(0)
+    torch_tools.set_default_dtype('float64')
+
+    model = __import__('mlcolvar').graph.core.nn.models.PaiNNModel(
+        n_out=2,
+        cutoff=0.1,
+        atomic_numbers=[1, 8],
+        n_bases=6,
+        n_layers=2,
+        n_hidden_channels=12,
+        w_out_after_sum=True,
+        basis_type='gaussian',
+    )
+    model.device = 'cpu'
+
+    batch = __import__('mlcolvar').graph.core.nn.models.test_get_data()
+    dataset = batch.to_data_list()[0]
+    loader = tg.loader.DataLoader(
+        [dataset], batch_size=1, shuffle=False,
+    )
+    data_dict = next(iter(loader)).to_dict()
+
+    export(
+        model,
+        example_inputs=batch.to_data_list()[0],
+        file_name='model.no_grad.pt2',
+        calculate_gradients=False,
+    )
+    model_c = load_exported('model.no_grad.pt2')
+
+    assert (
+        torch.abs(
+            model_c(data_dict)['values']
+            - torch.tensor([[0.012601337298479546, -0.0032668391572678087]])
+        ) < 1E-12
+    ).all()
+
+    os.remove('model.no_grad.pt2')
+
+    export(
+        model,
+        example_inputs=batch.to_data_list()[0],
+        file_name='model.pt2',
+    )
+    model_c = load_exported('model.pt2')
+
+    data_dict['positions'].requires_grad_(True)
+    outputs = model(data_dict)
+    grad_outputs: Optional[List[Optional[torch.Tensor]]] = [
+        torch.tensor(1, device=outputs.device)
+    ]
+    gradients_1 = torch.autograd.grad(
+        [outputs[0, 0]],
+        [data_dict['positions']],
+        grad_outputs=grad_outputs,
+        retain_graph=True,
+        create_graph=False,
+    )[0]
+    gradients_2 = torch.autograd.grad(
+        [outputs[0, 1]],
+        [data_dict['positions']],
+        grad_outputs=grad_outputs,
+        retain_graph=True,
+        create_graph=False,
+    )[0]
+
+    assert (
+        torch.abs(
+            model_c(data_dict)['gradients'][0] - gradients_1
+        ) < 1E-12
+    ).all()
+    assert (
+        torch.abs(
+            model_c(data_dict)['gradients'][1] - gradients_2
+        ) < 1E-12
+    ).all()
+
+    os.remove('model.pt2')
+
+
+if __name__ == '__main__':
+    test_export_schnet()
+    test_export_painn()
