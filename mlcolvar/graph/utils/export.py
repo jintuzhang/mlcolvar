@@ -132,9 +132,9 @@ def _get_input_and_shapes(
 def export(
     model: LightningModule,
     example_inputs: tg.data.Data,
+    file_name: str = 'model.pt2',
     n_nodes_max: Optional[int] = None,
     n_edges_max: Optional[int] = None,
-    file_name: str = 'model.pt2',
 ) -> str:
 
     torch._dynamo.allow_in_graph(torch.autograd.grad)
