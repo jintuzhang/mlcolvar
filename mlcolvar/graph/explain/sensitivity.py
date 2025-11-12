@@ -55,10 +55,9 @@ def graph_node_sensitivity(
 
     try:
         device_org = model.device
+        model = model.to(device)
     except AttributeError:
         device_org = None
-
-    model = model.to(device)
 
     gradients = get_dataset_cv_gradients(
         model,
