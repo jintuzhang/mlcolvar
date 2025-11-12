@@ -171,8 +171,8 @@ class GraphBaseCV(lightning.LightningModule):
         token: bool
             To be used.
         """
-        data['positions'].requires_grad_(True)
-        data['node_attrs'].requires_grad_(True)
+        # data['positions'].requires_grad_(True)
+        # data['node_attrs'].requires_grad_(True)
 
         return self._model(data)
 

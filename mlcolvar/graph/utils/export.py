@@ -1,9 +1,12 @@
 import os
 import warnings
 import torch
+import torch._inductor.package
 import torch_geometric as tg
 from lightning import LightningModule
-from typing import Dict, Tuple, Optional, Any
+from typing import Dict, Tuple, Optional, Any, List
+from torch.fx.experimental.proxy_tensor import make_fx
+
 
 from mlcolvar.graph.utils import torch_tools
 
@@ -11,7 +14,55 @@ from mlcolvar.graph.utils import torch_tools
 Helper functions for `torch.export` a model.
 """
 
-__all__ = ['export', 'save_exported', 'load_exported']
+__all__ = ['export', 'load_exported']
+
+
+class ExportableCV(torch.nn.Module):
+
+    def __init__(self, model: LightningModule) -> None:
+        super().__init__()
+        self._model = model
+
+    def forward(
+        self,
+        data: Dict[str, torch.Tensor],
+        token: bool = False
+    ) -> Dict[str, torch.Tensor]:
+
+        outputs = self._model(data)
+
+        if outputs.shape[1] > 1:
+
+            def fake_func_wrapper(positions: torch.Tensor) -> torch.Tensor:
+                data['positions'] = positions
+                outputs = self._model(data)
+                return outputs
+
+            gradients = torch.autograd.functional.jacobian(
+                fake_func_wrapper,
+                data['positions'],
+                create_graph=False,
+                strict=False,
+                vectorize=False,
+            )[0]
+
+        else:
+
+            grad_outputs: Optional[List[Optional[torch.Tensor]]] = [
+                torch.ones(1, device=outputs.device)
+            ]
+            gradients = torch.autograd.grad(
+                [outputs[0]],
+                [data['positions']],
+                grad_outputs=grad_outputs,
+                retain_graph=True,
+                create_graph=False,
+            )[0]
+            gradients = gradients.unsqueeze(0)
+
+        results = {'values': outputs, 'gradients': gradients}
+
+        return results
 
 
 def _scatter_sum_static(
@@ -21,6 +72,7 @@ def _scatter_sum_static(
     out: Optional[torch.Tensor] = None,
     dim_size: Optional[int] = None,
 ) -> torch.Tensor:
+
     return torch.sum(src, dim=dim, keepdim=True)
 
 
@@ -31,6 +83,7 @@ def _scatter_mean_static(
     out: Optional[torch.Tensor] = None,
     dim_size: Optional[int] = None,
 ) -> torch.Tensor:
+
     return torch.mean(src, dim=dim, keepdim=True)
 
 
@@ -40,7 +93,7 @@ def _get_input_and_shapes(
     n_edges_max: Optional[int] = None,
     device: str = 'cpu',
 ) -> Tuple[
-    Tuple[Dict[str, torch.Tensor]],
+    Dict[str, torch.Tensor],
     Dict[str, Dict[str, Dict[int, torch.export.Dim]]],
 ]:
 
@@ -48,6 +101,7 @@ def _get_input_and_shapes(
         [data], batch_size=1, shuffle=False,
     )
     dd = next(iter(loader)).to(device).to_dict()
+    dd['positions'].requires_grad_(True)
 
     dim_node = torch.export.Dim('node', max=n_nodes_max)
     dim_edge = torch.export.Dim('edge', max=n_edges_max)
@@ -72,7 +126,7 @@ def _get_input_and_shapes(
     if 'edge_masks_le' in dd.keys():
         shapes['edge_masks_le'] = {0: dim_edge}
 
-    return (dd,), {'data': shapes}
+    return dd, {'data': shapes}
 
 
 def export(
@@ -80,7 +134,11 @@ def export(
     example_inputs: tg.data.Data,
     n_nodes_max: Optional[int] = None,
     n_edges_max: Optional[int] = None,
-) -> torch.export.ExportedProgram:
+    file_name: str = 'model.pt2',
+) -> str:
+
+    torch._dynamo.allow_in_graph(torch.autograd.grad)
+    torch._dynamo.allow_in_graph(torch.autograd.functional.jacobian)
 
     inputs, input_shapes = _get_input_and_shapes(
         example_inputs, n_nodes_max, n_edges_max, model.device
@@ -92,20 +150,23 @@ def export(
     torch_tools.scatter_sum = _scatter_sum_static
     torch_tools.scatter_mean = _scatter_mean_static
 
-    exported = torch.export.export(
-        model, inputs, dynamic_shapes=input_shapes, strict=False
+    exportable = ExportableCV(model)
+
+    # token from: https://depyf.readthedocs.io/en/latest/walk_through.html
+    def forward_and_backward(
+        _inputs: Dict[str, torch.Tensor], kwargs: Dict[str, Any]
+    ) -> Dict[str, torch.Tensor]:
+        return exportable(_inputs, False)
+
+    wrapped_function = make_fx(
+        forward_and_backward,
+        tracing_mode='symbolic',
+        _allow_non_fake_inputs=True,
     )
-
-    torch_tools.scatter_sum = scatter_sum
-    torch_tools.scatter_mean = scatter_mean
-
-    return exported
-
-
-def save_exported(
-    exported: torch.export.ExportedProgram,
-    file_name: str = 'model.pt2',
-) -> str:
+    joint_graph = wrapped_function(inputs, {})
+    aot_files = torch._inductor.aot_compile(
+        joint_graph, inputs, options={'aot_inductor.package': True}
+    )
 
     if file_name[-4:] != '.pt2':
         tmp = os.path.splitext(file_name)[0] + '.pt2'
@@ -114,14 +175,17 @@ def save_exported(
         )
         file_name = tmp
 
-    output_path = torch._inductor.aoti_compile_and_package(
-        exported, package_path=file_name
-    )
+    output_path = torch._inductor.package.package_aoti(file_name, aot_files)
+
+    torch_tools.scatter_sum = scatter_sum
+    torch_tools.scatter_mean = scatter_mean
 
     return output_path
 
 
-def load_exported(file_name: str) -> Any:
+def load_exported(
+    file_name: str,
+) -> torch._inductor.package.package.AOTICompiledModel:
 
     model = torch._inductor.aoti_load_package(file_name)
 
