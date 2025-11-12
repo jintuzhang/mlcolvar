@@ -78,6 +78,7 @@ class GaussianBasis(torch.nn.Module):
 
             dist = x.view(-1, 1) - self.offset.view(1, -1)
             values = torch.exp(self.coeff * torch.pow(dist, 2))
+            values = values + 0.0  # NOTE: for compilation
 
             indices_l = edge_masks_le.nonzero()[:, 0]
             x_l = x[indices_l]
