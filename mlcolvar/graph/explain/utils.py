@@ -71,7 +71,7 @@ def get_dataset_cv_values(
                         batchs.to(device).to_dict()
                     )
                 )
-                outputs = outputs['values'].cpu().numpy()
+                outputs = outputs[0].cpu().numpy()
             else:
                 raise TypeError(
                     'Unknown model type: "{}"!'.format(type(model))
@@ -144,7 +144,7 @@ def get_dataset_cv_gradients(
             )[0]
         elif type(model) is torch._inductor.package.package.AOTICompiledModel:
             outputs = model(gutils.export._dict_to_tensors(batch_dict))
-            gradients = outputs['gradients'][component]
+            gradients = outputs[1][component]
         else:
             raise TypeError('Unknown model type: "{}"!'.format(type(model)))
 

@@ -30,7 +30,7 @@ class ExportableCV(torch.nn.Module):
         self,
         data: Tuple[torch.Tensor],
         token: bool = False
-    ) -> Dict[str, torch.Tensor]:
+    ) -> Tuple[torch.Tensor]:
 
         data = _tensors_to_dict(data)
         outputs = self._model(data)
@@ -64,10 +64,12 @@ class ExportableCV(torch.nn.Module):
             )[0]
             gradients = gradients.unsqueeze(0)
 
-        results = {
-            'values': outputs,
-            'gradients': gradients if self._calculate_gradients else None,
-        }
+        results = (
+            outputs,
+            gradients if self._calculate_gradients else torch.tensor(
+                0, device=outputs.device, dtype=outputs.dtype
+            )
+        )
 
         return results
 
@@ -172,12 +174,18 @@ class ExportableCommittor(torch.nn.Module):
         gradients_z = gradients_z.unsqueeze(0)
         gradients_b = gradients_b.unsqueeze(0)
 
-        results = {
-            'values': outputs,
-            'gradients': gradients_z if self._calculate_gradients else None,
-            'k_bias': k_bias_value if self._calculate_k_bias else None,
-            'gradients_kb': gradients_b if self._calculate_k_bias else None,
-        }
+        results = (
+            outputs,
+            gradients_z if self._calculate_gradients else torch.tensor(
+                0, device=outputs.device, dtype=outputs.dtype
+            ),
+            k_bias_value if self._calculate_k_bias else torch.tensor(
+                0, device=outputs.device, dtype=outputs.dtype
+            ),
+            gradients_b if self._calculate_k_bias else torch.tensor(
+                0, device=outputs.device, dtype=outputs.dtype
+            ),
+        )
 
         return results
 
@@ -220,6 +228,9 @@ def _get_inputs(
 
 def _dict_to_tensors(inputs: Dict[str, torch.Tensor]) -> Tuple[torch.Tensor]:
 
+    dtype = inputs['positions'].dtype
+    device = inputs['positions'].device
+
     outputs = (
         inputs['edge_index'],
         inputs['shifts'],
@@ -234,15 +245,21 @@ def _dict_to_tensors(inputs: Dict[str, torch.Tensor]) -> Tuple[torch.Tensor]:
         inputs['n_system'],
         (
             inputs['system_masks']
-            if 'system_masks' in inputs.keys() else None
+            if 'system_masks' in inputs.keys() else torch.tensor(
+                0, device=device, dtype=dtype
+            )
         ),
         (
             inputs['subsystem_masks']
-            if 'subsystem_masks' in inputs.keys() else None
+            if 'subsystem_masks' in inputs.keys() else torch.tensor(
+                0, device=device, dtype=dtype
+            )
         ),
         (
             inputs['edge_masks_le']
-            if 'edge_masks_le' in inputs.keys() else None
+            if 'edge_masks_le' in inputs.keys() else torch.tensor(
+                0, device=device, dtype=dtype
+            )
         ),
     )
 
@@ -264,11 +281,11 @@ def _tensors_to_dict(inputs: Tuple[torch.Tensor]) -> Dict[str, torch.Tensor]:
         'ptr': inputs[9],
         'n_system': inputs[10],
     }
-    if inputs[11] is not None:
+    if len(inputs[11].shape) != 0:
         outputs['system_masks'] = inputs[11]
-    if inputs[12] is not None:
+    if len(inputs[12].shape) != 0:
         outputs['subsystem_masks'] = inputs[12]
-    if inputs[13] is not None:
+    if len(inputs[13].shape) != 0:
         outputs['edge_masks_le'] = inputs[13]
 
     return outputs
