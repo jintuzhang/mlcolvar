@@ -85,7 +85,7 @@ class ExportableCommittor(torch.nn.Module):
         kb_epsilon: float = 1E-14,
         kb_lambda: float = -1.0,
         kb_truncated: bool = False,
-        kb_weightd: bool = False,
+        kb_weighted: bool = False,
     ) -> None:
 
         super().__init__()
@@ -93,7 +93,7 @@ class ExportableCommittor(torch.nn.Module):
         self._calculate_gradients = calculate_gradients
         self._calculate_k_bias = calculate_k_bias
         self._kb_truncated = kb_truncated
-        self._kb_weighted = kb_weightd
+        self._kb_weighted = kb_weighted
         self._kb_epsilon = torch.tensor(
             kb_epsilon, dtype=torch.get_default_dtype()
         )
