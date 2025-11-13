@@ -71,6 +71,111 @@ class ExportableCV(torch.nn.Module):
         return results
 
 
+class ExportableCommittor(torch.nn.Module):
+
+    def __init__(
+        self,
+        model: LightningModule,
+        calculate_gradients: bool = True,
+        calculate_k_bias: bool = False,
+        kb_epsilon: float = 1E-14,
+        kb_lambda: float = -1.0,
+        kb_truncated: bool = False,
+        kb_weightd: bool = False,
+    ) -> None:
+
+        super().__init__()
+        self._model = model
+        self._calculate_gradients = calculate_gradients
+        self._calculate_k_bias = calculate_k_bias
+        self._kb_truncated = kb_truncated
+        self._kb_weighted = kb_weightd
+        self._kb_epsilon = torch.tensor(
+            kb_epsilon, dtype=torch.get_default_dtype()
+        )
+        self._kb_lambda = torch.tensor(
+            kb_lambda, dtype=torch.get_default_dtype()
+        )
+        self._kb_sigmoid_p = torch.tensor(
+            self._model.sigmoid.p, dtype=torch.get_default_dtype()
+        )
+
+        if calculate_k_bias and not calculate_gradients:
+            raise RuntimeError(
+                'Can not calculate k_bias without calculating gradients!'
+            )
+
+    def forward(
+        self,
+        data: Dict[str, torch.Tensor],
+        token: bool = False
+    ) -> Dict[str, torch.Tensor]:
+
+        outputs = self._model(data)
+
+        dtype = outputs.dtype
+        device = outputs.device
+
+        z = outputs[0][0]
+        q = outputs[0][1]
+        lambd = self._kb_lambda.to(device)
+        epsilon = self._kb_epsilon.to(device)
+        sigmoid_p = self._kb_sigmoid_p.to(device)
+
+        grad_outputs: Optional[List[Optional[torch.Tensor]]] = [
+            torch.tensor(1, device=outputs.device)
+        ]
+        gradients_z = torch.autograd.grad(
+            [outputs[0, 0]],
+            [data['positions']],
+            grad_outputs=grad_outputs,
+            retain_graph=True,
+            create_graph=True,
+        )[0]
+
+        gradients_z_2 = torch.pow(gradients_z, 2)
+
+        if self._kb_weighted:
+            atomic_masses = self._model.atomic_masses.to(dtype).to(device)
+            node_types = torch.where(data['node_attrs'])[1]
+            node_masses = atomic_masses[node_types].unsqueeze(-1)
+            gradients_z_2 = gradients_z_2 / node_masses
+
+        gradients_z_sum = torch.sum(gradients_z_2)
+
+        if not self._kb_truncated:
+            k_bias_value = lambd * (
+                torch.log(gradients_z_sum + epsilon)
+                - 4.0 * torch.log(1.0 + torch.exp(-sigmoid_p * z))
+                - 2.0 * sigmoid_p * z
+                - torch.log(epsilon)
+            )
+        else:
+            k_bias_value = lambd * (
+                torch.log(
+                    gradients_z_sum * torch.pow(q * (1 - q), 2) + epsilon
+                )
+                - torch.log(epsilon)
+            )
+
+        gradients_b = torch.autograd.grad(
+            [k_bias_value],
+            [data['positions']],
+            grad_outputs=grad_outputs,
+            retain_graph=False,
+            create_graph=False,
+        )[0]
+
+        results = {
+            'values': outputs,
+            'gradients': gradients_z if self._calculate_gradients else None,
+            'k_bias': k_bias_value if self._calculate_k_bias else None,
+            'gradients_kb': gradients_b if self._calculate_k_bias else None,
+        }
+
+        return results
+
+
 def _scatter_sum_static(
     src: torch.Tensor,
     index: torch.Tensor,
@@ -140,6 +245,7 @@ def export(
     example_inputs: tg.data.Data,
     file_name: str = 'model.pt2',
     calculate_gradients: bool = True,
+    k_bias_options: Optional[Dict[str, Any]] = {},
     n_nodes_max: Optional[int] = None,
     n_edges_max: Optional[int] = None,
 ) -> str:
@@ -157,7 +263,12 @@ def export(
     torch_tools.scatter_sum = _scatter_sum_static
     torch_tools.scatter_mean = _scatter_mean_static
 
-    exportable = ExportableCV(model, calculate_gradients)
+    if hasattr(model, 'is_committor') and model.is_committor == 1:
+        exportable = ExportableCommittor(
+            model, calculate_gradients, **k_bias_options
+        )
+    else:
+        exportable = ExportableCV(model, calculate_gradients)
 
     # taken from: https://depyf.readthedocs.io/en/latest/walk_through.html
     def forward_and_backward(
