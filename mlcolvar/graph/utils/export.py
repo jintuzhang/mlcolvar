@@ -21,6 +21,7 @@ class ExportableCV(torch.nn.Module):
     def __init__(
         self, model: LightningModule, calculate_gradients: bool = True,
     ) -> None:
+
         super().__init__()
         self._model = model
         self._calculate_gradients = calculate_gradients
@@ -57,7 +58,7 @@ class ExportableCV(torch.nn.Module):
                 [outputs[0]],
                 [data['positions']],
                 grad_outputs=grad_outputs,
-                retain_graph=True,
+                retain_graph=False,
                 create_graph=False,
             )[0]
             gradients = gradients.unsqueeze(0)
