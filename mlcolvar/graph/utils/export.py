@@ -201,15 +201,10 @@ def _scatter_mean_static(
     return torch.mean(src, dim=dim, keepdim=True)
 
 
-def _get_input_and_shapes(
+def _get_inputs(
     data: tg.data.Data,
-    n_nodes_max: Optional[int] = None,
-    n_edges_max: Optional[int] = None,
     device: str = 'cpu',
-) -> Tuple[
-    Dict[str, torch.Tensor],
-    Dict[str, Dict[str, Dict[int, torch.export.Dim]]],
-]:
+) -> Dict[str, torch.Tensor]:
 
     loader = tg.loader.DataLoader(
         [data], batch_size=1, shuffle=False,
@@ -217,30 +212,7 @@ def _get_input_and_shapes(
     dd = next(iter(loader)).to(device).to_dict()
     dd['positions'].requires_grad_(True)
 
-    dim_node = torch.export.Dim('node', max=n_nodes_max)
-    dim_edge = torch.export.Dim('edge', max=n_edges_max)
-
-    shapes = {
-        'edge_index': {1: dim_edge},
-        'shifts': {0: dim_edge},
-        'unit_shifts': {0: dim_edge},
-        'positions': {0: dim_node},
-        'node_attrs': {0: dim_node},
-        'batch': {0: dim_node},
-        'weight': {0: torch.export.Dim.STATIC},
-        'graph_labels': {0: torch.export.Dim.STATIC},
-        'cell': {0: torch.export.Dim.STATIC},
-        'ptr': {0: torch.export.Dim.STATIC},
-        'n_system': {0: torch.export.Dim.STATIC},
-    }
-    if 'system_masks' in dd.keys():
-        shapes['system_masks'] = {0: dim_node}
-    if 'subsystem_masks' in dd.keys():
-        shapes['subsystem_masks'] = {0: dim_node}
-    if 'edge_masks_le' in dd.keys():
-        shapes['edge_masks_le'] = {0: dim_edge}
-
-    return dd, {'data': shapes}
+    return dd
 
 
 def export(
@@ -249,16 +221,12 @@ def export(
     file_name: str = 'model.pt2',
     calculate_gradients: bool = True,
     k_bias_options: Optional[Dict[str, Any]] = {},
-    n_nodes_max: Optional[int] = None,
-    n_edges_max: Optional[int] = None,
 ) -> str:
 
     torch._dynamo.allow_in_graph(torch.autograd.grad)
     torch._dynamo.allow_in_graph(torch.autograd.functional.jacobian)
 
-    inputs, input_shapes = _get_input_and_shapes(
-        example_inputs, n_nodes_max, n_edges_max, model.device
-    )
+    inputs = _get_inputs(example_inputs, model.device)
 
     # I hate monkey patch ...
     scatter_sum = torch_tools.scatter_sum
