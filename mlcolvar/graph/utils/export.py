@@ -394,7 +394,7 @@ def test_export_schnet() -> None:
 
     assert (
         torch.abs(
-            model_c(data_dict)['values']
+            model_c(_dict_to_tensors(data_dict))[0]
             - torch.tensor([[0.3654537816221449, -0.0748265132499575]])
         ) < 1E-12
     ).all()
@@ -430,12 +430,12 @@ def test_export_schnet() -> None:
 
     assert (
         torch.abs(
-            model_c(data_dict)['gradients'][0] - gradients_1
+            model_c(_dict_to_tensors(data_dict))[1][0] - gradients_1
         ) < 1E-12
     ).all()
     assert (
         torch.abs(
-            model_c(data_dict)['gradients'][1] - gradients_2
+            model_c(_dict_to_tensors(data_dict))[1][1] - gradients_2
         ) < 1E-12
     ).all()
 
@@ -476,7 +476,7 @@ def test_export_painn() -> None:
 
     assert (
         torch.abs(
-            model_c(data_dict)['values']
+            model_c(_dict_to_tensors(data_dict))[0]
             - torch.tensor([[0.012601337298479546, -0.0032668391572678087]])
         ) < 1E-12
     ).all()
@@ -512,12 +512,12 @@ def test_export_painn() -> None:
 
     assert (
         torch.abs(
-            model_c(data_dict)['gradients'][0] - gradients_1
+            model_c(_dict_to_tensors(data_dict))[1][0] - gradients_1
         ) < 1E-12
     ).all()
     assert (
         torch.abs(
-            model_c(data_dict)['gradients'][1] - gradients_2
+            model_c(_dict_to_tensors(data_dict))[1][1] - gradients_2
         ) < 1E-12
     ).all()
 
