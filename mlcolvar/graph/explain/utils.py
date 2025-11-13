@@ -59,13 +59,18 @@ def get_dataset_cv_values(
 
     with torch.no_grad():
         for batchs in items:
-            outputs = model(batchs.to(device).to_dict())
             if issubclass(type(model), gcvs.GraphBaseCV):
+                outputs = model(batchs.to(device).to_dict())
                 outputs = outputs.cpu().numpy()
             elif (
                 type(model)
                 is torch._inductor.package.package.AOTICompiledModel
             ):
+                outputs = model(
+                    gutils.export._dict_to_tensors(
+                        batchs.to(device).to_dict()
+                    )
+                )
                 outputs = outputs['values'].cpu().numpy()
             else:
                 raise TypeError(
@@ -138,7 +143,7 @@ def get_dataset_cv_gradients(
                 create_graph=False,
             )[0]
         elif type(model) is torch._inductor.package.package.AOTICompiledModel:
-            outputs = model(batch_dict)
+            outputs = model(gutils.export._dict_to_tensors(batch_dict))
             gradients = outputs['gradients'][component]
         else:
             raise TypeError('Unknown model type: "{}"!'.format(type(model)))

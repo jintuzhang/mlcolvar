@@ -28,10 +28,11 @@ class ExportableCV(torch.nn.Module):
 
     def forward(
         self,
-        data: Dict[str, torch.Tensor],
+        data: Tuple[torch.Tensor],
         token: bool = False
     ) -> Dict[str, torch.Tensor]:
 
+        data = _tensors_to_dict(data)
         outputs = self._model(data)
 
         if outputs.shape[1] > 1:
@@ -107,9 +108,11 @@ class ExportableCommittor(torch.nn.Module):
 
     def forward(
         self,
-        data: Dict[str, torch.Tensor],
+        data: Tuple[torch.Tensor],
         token: bool = False
     ) -> Dict[str, torch.Tensor]:
+
+        data = _tensors_to_dict(data)
 
         outputs = self._model(data)
 
@@ -215,6 +218,62 @@ def _get_inputs(
     return dd
 
 
+def _dict_to_tensors(inputs: Dict[str, torch.Tensor]) -> Tuple[torch.Tensor]:
+
+    outputs = (
+        inputs['edge_index'],
+        inputs['shifts'],
+        inputs['unit_shifts'],
+        inputs['positions'],
+        inputs['node_attrs'],
+        inputs['batch'],
+        inputs['weight'],
+        inputs['graph_labels'],
+        inputs['cell'],
+        inputs['ptr'],
+        inputs['n_system'],
+        (
+            inputs['system_masks']
+            if 'system_masks' in inputs.keys() else None
+        ),
+        (
+            inputs['subsystem_masks']
+            if 'subsystem_masks' in inputs.keys() else None
+        ),
+        (
+            inputs['edge_masks_le']
+            if 'edge_masks_le' in inputs.keys() else None
+        ),
+    )
+
+    return outputs
+
+
+def _tensors_to_dict(inputs: Tuple[torch.Tensor]) -> Dict[str, torch.Tensor]:
+
+    outputs = {
+        'edge_index': inputs[0],
+        'shifts': inputs[1],
+        'unit_shifts': inputs[2],
+        'positions': inputs[3],
+        'node_attrs': inputs[4],
+        'batch': inputs[5],
+        'weight': inputs[6],
+        'graph_labels': inputs[7],
+        'cell': inputs[8],
+        'ptr': inputs[9],
+        'n_system': inputs[10],
+    }
+    if inputs[11] is not None:
+        outputs['system_masks'] = inputs[11]
+    if inputs[12] is not None:
+        outputs['subsystem_masks'] = inputs[12]
+    if inputs[13] is not None:
+        outputs['edge_masks_le'] = inputs[13]
+
+    return outputs
+
+
 def export(
     model: LightningModule,
     example_inputs: tg.data.Data,
@@ -227,6 +286,7 @@ def export(
     torch._dynamo.allow_in_graph(torch.autograd.functional.jacobian)
 
     inputs = _get_inputs(example_inputs, model.device)
+    inputs = _dict_to_tensors(inputs)
 
     # I hate monkey patch ...
     scatter_sum = torch_tools.scatter_sum
@@ -243,7 +303,7 @@ def export(
 
     # taken from: https://depyf.readthedocs.io/en/latest/walk_through.html
     def forward_and_backward(
-        _inputs: Dict[str, torch.Tensor], kwargs: Dict[str, Any]
+        _inputs: Tuple[torch.Tensor], kwargs: Dict[str, Any]
     ) -> Dict[str, torch.Tensor]:
         return exportable(_inputs, False)
 
