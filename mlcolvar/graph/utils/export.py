@@ -166,6 +166,9 @@ class ExportableCommittor(torch.nn.Module):
             create_graph=False,
         )[0]
 
+        gradients_z = gradients_z.unsqueeze(0)
+        gradients_b = gradients_b.unsqueeze(0)
+
         results = {
             'values': outputs,
             'gradients': gradients_z if self._calculate_gradients else None,
