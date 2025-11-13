@@ -112,7 +112,7 @@ class ExportableCommittor(torch.nn.Module):
         self,
         data: Tuple[torch.Tensor],
         token: bool = False
-    ) -> Dict[str, torch.Tensor]:
+    ) -> Tuple[torch.Tensor]:
 
         data = _tensors_to_dict(data)
 
