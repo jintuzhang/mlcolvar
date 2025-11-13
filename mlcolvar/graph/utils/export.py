@@ -33,6 +33,7 @@ class ExportableCV(torch.nn.Module):
     ) -> Tuple[torch.Tensor]:
 
         data = _tensors_to_dict(data)
+
         outputs = self._model(data)
 
         if outputs.shape[1] > 1:
@@ -320,7 +321,7 @@ def export(
 
     # taken from: https://depyf.readthedocs.io/en/latest/walk_through.html
     def forward_and_backward(
-        _inputs: Tuple[torch.Tensor], kwargs: Dict[str, Any]
+        _inputs: Tuple[torch.Tensor], kwargs: Dict[str, Any] = {}
     ) -> Dict[str, torch.Tensor]:
         return exportable(_inputs, False)
 
