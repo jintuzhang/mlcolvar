@@ -118,8 +118,8 @@ class CFConv(MessagePassing):
         W = self.network(edge_attr) * C.view(-1, 1)
 
         if edge_masks_le is not None:
-            # assert self.network_l is not None
-            # assert self.cutoff_l > self.cutoff
+            assert self.network_l is not None
+            assert self.cutoff_l > self.cutoff
 
             indices_l = edge_masks_le.nonzero()[:, 0]
             lengths_l = edge_weight[indices_l]

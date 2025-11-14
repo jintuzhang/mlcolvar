@@ -237,7 +237,7 @@ class GVPConv(MessagePassing):
             # apply SchNet-style cutoff function
             c = 0.5 * (torch.cos(lens * math.pi / self.cutoff) + 1.0)
             if edge_masks_le is not None:
-                # assert self.cutoff_l > self.cutoff
+                assert self.cutoff_l > self.cutoff
 
                 indices_l = edge_masks_le.nonzero()[:, 0]
                 lens_l = edge_lengths[indices_l]
