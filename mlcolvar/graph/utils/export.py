@@ -1,5 +1,9 @@
 import os
+import json
+import uuid
 import warnings
+import zipfile
+
 import torch
 import torch._inductor.package
 import torch_geometric as tg
@@ -292,6 +296,26 @@ def _tensors_to_dict(inputs: Tuple[torch.Tensor]) -> Dict[str, torch.Tensor]:
     return outputs
 
 
+def _update_package_metadata(file_name: str, data: Dict[str, str]) -> None:
+
+    tmp_file_name = str(uuid.uuid4())
+
+    with (
+        zipfile.ZipFile(file_name, 'r') as f_in,
+        zipfile.ZipFile(tmp_file_name, 'w') as f_out
+    ):
+        for item in f_in.infolist():
+            if len(item.filename.split('metadata')) == 2:
+                metadata = json.loads(f_in.read(item.filename))
+                metadata.update(data)
+                f_out.writestr(item.filename, json.dumps(metadata))
+            else:
+                f_out.writestr(item.filename, f_in.read(item.filename))
+
+    os.remove(file_name)
+    os.rename(tmp_file_name, file_name)
+
+
 def export(
     model: LightningModule,
     example_inputs: tg.data.Data,
@@ -312,7 +336,21 @@ def export(
     torch_tools.scatter_sum = _scatter_sum_static
     torch_tools.scatter_mean = _scatter_mean_static
 
-    if hasattr(model, 'is_committor') and model.is_committor == 1:
+    is_committor = hasattr(model, 'is_committor') and model.is_committor == 1
+
+    if is_committor:
+        for k in k_bias_options.keys():
+            if k in [
+                'calculate_k_bias',
+                'kb_truncated',
+                'kb_weighted',
+            ]:
+                k_bias_options[k] = bool(k_bias_options[k])
+            if k in [
+                'kb_epsilon',
+                'kb_lambda',
+            ]:
+                k_bias_options[k] = float(k_bias_options[k])
         exportable = ExportableCommittor(
             model, calculate_gradients, **k_bias_options
         )
@@ -343,6 +381,19 @@ def export(
         file_name = tmp
 
     output_path = torch._inductor.package.package_aoti(file_name, aot_files)
+
+    if is_committor:
+        metadata = {
+            'calculate_k_bias': False,
+            'kb_epsilon': 1E-14,
+            'kb_lambda': -1.0,
+            'kb_truncated': False,
+            'kb_weighted': False,
+        }
+        metadata.update(k_bias_options)
+        for k in metadata.keys():
+            metadata[k] = str(metadata[k])
+        _update_package_metadata(file_name, metadata)
 
     torch_tools.scatter_sum = scatter_sum
     torch_tools.scatter_mean = scatter_mean
