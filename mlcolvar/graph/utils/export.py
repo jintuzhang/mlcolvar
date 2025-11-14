@@ -382,18 +382,21 @@ def export(
 
     output_path = torch._inductor.package.package_aoti(file_name, aot_files)
 
+    metadata = {'float_dtype': str(inputs[3].dtype)[-2:]}
     if is_committor:
-        metadata = {
+        metadata_c = {
             'calculate_k_bias': False,
             'kb_epsilon': 1E-14,
             'kb_lambda': -1.0,
             'kb_truncated': False,
             'kb_weighted': False,
         }
-        metadata.update(k_bias_options)
-        for k in metadata.keys():
-            metadata[k] = str(metadata[k])
-        _update_package_metadata(file_name, metadata)
+        metadata_c.update(k_bias_options)
+        for k in metadata_c.keys():
+            metadata_c[k] = str(metadata_c[k])
+        metadata.update(metadata_c)
+
+    _update_package_metadata(file_name, metadata)
 
     torch_tools.scatter_sum = scatter_sum
     torch_tools.scatter_mean = scatter_mean
