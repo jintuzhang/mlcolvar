@@ -506,6 +506,9 @@ def test_export_schnet() -> None:
         aggr='min',
         w_out_after_sum=True
     )
+    model.n_cvs = model.n_out
+    model.training_time = torch.zeros(7, dtype=int)
+    model.dtype = torch.float64
     model.device = 'cpu'
 
     batch = __import__('mlcolvar').graph.core.nn.models.test_get_data()
@@ -588,6 +591,9 @@ def test_export_painn() -> None:
         w_out_after_sum=True,
         basis_type='gaussian',
     )
+    model.n_cvs = model.n_out
+    model.training_time = torch.zeros(7, dtype=int)
+    model.dtype = torch.float64
     model.device = 'cpu'
 
     batch = __import__('mlcolvar').graph.core.nn.models.test_get_data()
