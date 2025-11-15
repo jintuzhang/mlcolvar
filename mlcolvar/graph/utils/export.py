@@ -296,6 +296,83 @@ def _tensors_to_dict(inputs: Tuple[torch.Tensor]) -> Dict[str, torch.Tensor]:
     return outputs
 
 
+def _get_model_summary(
+    model_name: str, module: torch.nn.Module, level_max: int, level: int
+) -> str:
+
+    result = ""
+    model_type = str(module.__class__.__name__)
+    if model_type in ['Linear', 'TICA']:
+        result = result + "  " * level + "(" + model_name + "): " + str(module)
+    else:
+        result = result + "  " * level + "(" + model_name + "): " + model_type
+
+    if (len(list(module.named_children())) != 0):
+        if (level <= level_max):
+            result = result + " {\n"
+            for s in module.named_children():
+                result = result + _get_model_summary(
+                    s[0], s[1], level_max, level + 1
+                )
+            result = result + "  " * level + "}\n"
+        else:
+            result = result + " { ... }\n"
+    else:
+        result = result + "\n"
+
+    return result
+
+
+def _get_model_metadata(
+    model: LightningModule,
+    k_bias_options: Optional[Dict[str, Any]] = None,
+    model_summary_level: int = 3,
+) -> Dict[str, str]:
+
+    is_committor = hasattr(model, 'is_committor') and model.is_committor == 1
+
+    metadata = {
+        'n_cvs': str(model.n_cvs.item()),
+        'cutoff': str(model.cutoff.item()),
+        'cutoff_l': str(model.cutoff_l.item()),
+        'n_atom_types': str(len(model.atomic_numbers)),
+        'float_dtype': str(model.dtype)[-2:],
+    }
+    for i in range(len(model.atomic_numbers)):
+        metadata[
+            'atomic_number_{:d}'.format(i)
+        ] = str(model.atomic_numbers[i].item())
+
+    metadata['training_time'] = (
+        'UTC{:+d} {:d}-{:02d}-{:02d} {:02d}:{:02d}:{:02d}'
+    ).format(
+        *(model.training_time.cpu().numpy().tolist()),
+    )
+    metadata['model_summary'] = _get_model_summary(
+        'CV', model, model_summary_level, 0
+    )
+
+    if is_committor:
+        for i in range(len(model.atomic_numbers)):
+            metadata[
+                'atomic_masses_{:d}'.format(i)
+            ] = str(model.atomic_masses[i].item())
+    if is_committor and k_bias_options is not None:
+        metadata_c = {
+            'calculate_k_bias': False,
+            'kb_epsilon': 1E-14,
+            'kb_lambda': -1.0,
+            'kb_truncated': False,
+            'kb_weighted': False,
+        }
+        metadata_c.update(k_bias_options)
+        for k in metadata_c.keys():
+            metadata_c[k] = str(metadata_c[k])
+        metadata.update(metadata_c)
+
+    return metadata
+
+
 def _update_package_metadata(file_name: str, data: Dict[str, str]) -> None:
 
     tmp_file_name = str(uuid.uuid4())
@@ -322,6 +399,7 @@ def export(
     file_name: str = 'model.pt2',
     calculate_gradients: bool = True,
     k_bias_options: Optional[Dict[str, Any]] = {},
+    model_summary_level: int = 3,
 ) -> str:
 
     torch._dynamo.allow_in_graph(torch.autograd.grad)
@@ -380,21 +458,8 @@ def export(
         )
         file_name = tmp
 
+    metadata = _get_model_metadata(model, k_bias_options, model_summary_level)
     output_path = torch._inductor.package.package_aoti(file_name, aot_files)
-
-    metadata = {'float_dtype': str(inputs[3].dtype)[-2:]}
-    if is_committor:
-        metadata_c = {
-            'calculate_k_bias': False,
-            'kb_epsilon': 1E-14,
-            'kb_lambda': -1.0,
-            'kb_truncated': False,
-            'kb_weighted': False,
-        }
-        metadata_c.update(k_bias_options)
-        for k in metadata_c.keys():
-            metadata_c[k] = str(metadata_c[k])
-        metadata.update(metadata_c)
 
     _update_package_metadata(file_name, metadata)
 
