@@ -300,12 +300,13 @@ def _get_model_summary(
     model_name: str, module: torch.nn.Module, level_max: int, level: int
 ) -> str:
 
-    result = ""
+    result = "  " * (level + 1) + "(" + model_name + "): "
+
     model_type = str(module.__class__.__name__)
     if model_type in ['Linear', 'TICA']:
-        result = result + "  " * level + "(" + model_name + "): " + str(module)
+        result = result + str(module)
     else:
-        result = result + "  " * level + "(" + model_name + "): " + model_type
+        result = result + model_type
 
     if (len(list(module.named_children())) != 0):
         if (level <= level_max):
@@ -314,7 +315,7 @@ def _get_model_summary(
                 result = result + _get_model_summary(
                     s[0], s[1], level_max, level + 1
                 )
-            result = result + "  " * level + "}\n"
+            result = result + "  " * (level + 1) + "}\n"
         else:
             result = result + " { ... }\n"
     else:
@@ -325,6 +326,7 @@ def _get_model_summary(
 
 def _get_model_metadata(
     model: LightningModule,
+    calculate_gradients: bool,
     k_bias_options: Optional[Dict[str, Any]] = None,
     model_summary_level: int = 3,
 ) -> Dict[str, str]:
@@ -351,8 +353,12 @@ def _get_model_metadata(
     metadata['model_summary'] = _get_model_summary(
         'CV', model, model_summary_level, 0
     )
+    metadata['n_parameters'] = str(sum(
+        p.numel() for p in model.parameters() if p.requires_grad
+    ))
 
     if is_committor:
+        metadata['is_committor'] = str(True)
         for i in range(len(model.atomic_numbers)):
             metadata[
                 'atomic_masses_{:d}'.format(i)
@@ -360,7 +366,7 @@ def _get_model_metadata(
     if is_committor and k_bias_options is not None:
         metadata_c = {
             'calculate_k_bias': False,
-            'kb_epsilon': 1E-14,
+            'kb_epsilon': 1E-14 if model.dtype == torch.float64 else 1E-7,
             'kb_lambda': -1.0,
             'kb_truncated': False,
             'kb_weighted': False,
@@ -369,6 +375,10 @@ def _get_model_metadata(
         for k in metadata_c.keys():
             metadata_c[k] = str(metadata_c[k])
         metadata.update(metadata_c)
+    else:
+        metadata['is_committor'] = str(False)
+
+    metadata['calculate_gradients'] = str(calculate_gradients)
 
     return metadata
 
@@ -458,7 +468,9 @@ def export(
         )
         file_name = tmp
 
-    metadata = _get_model_metadata(model, k_bias_options, model_summary_level)
+    metadata = _get_model_metadata(
+        model, calculate_gradients, k_bias_options, model_summary_level
+    )
     output_path = torch._inductor.package.package_aoti(file_name, aot_files)
 
     _update_package_metadata(file_name, metadata)
