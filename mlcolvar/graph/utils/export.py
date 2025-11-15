@@ -14,7 +14,7 @@ from torch.fx.experimental.proxy_tensor import make_fx
 from mlcolvar.graph.utils import torch_tools
 
 """
-Helper functions for `torch.export` a model.
+Helper functions for exporting a model.
 """
 
 __all__ = ['export', 'load_exported']
@@ -411,6 +411,78 @@ def export(
     k_bias_options: Optional[Dict[str, Any]] = {},
     model_summary_level: int = 3,
 ) -> str:
+    """
+    Export a CV model using symbolic tracing and Ahead-Of-Time (AOT)
+    compilation. Models exported in such a way is generally much faster than
+    those compiled with JIT compilers (e.g., the `torch.jit.script` method).
+
+    Parameters
+    ----------
+    model: lightning.LightningModule
+        The CV model.
+    example_inputs: torch_geometric.data.Data
+        Example input data.
+    file_name: str
+        Name of the exported model file. Note that the name should contain a
+        `.pt2` extension.
+    calculate_gradients: bool
+        If include gradient calculations in the exported model. Do NOT disable
+        this option if you do not know that you are doing!
+    k_bias_options: Dict[str, Any]
+        Options for calculating the Kolmogorov bias ($V_K) for a committor
+        model. Available fields are:
+        - 'calculate_k_bias': bool
+            If calculate the Kolmogorov bias.
+        - 'kb_epsilon': float
+            The epsilon value for calculating the Kolmogorov bias.
+        - 'kb_lambda': float,
+            The lambda value for calculating the Kolmogorov bias.
+        - 'kb_truncated': False,
+            If calculate the truncated (twisted) Kolmogorov bias.
+        - 'kb_weighted': False,
+            If calculate the mass-weighted (exact) Kolmogorov bias.
+
+    Notes
+    -----
+    A few remarks are in order:
+
+    1. dtype and running device of the model will be fixed after export, which
+    means that one can not exporting a model stored on CPU and then inference
+    on GPU. To ensure that the exported model will has the desired dtype and/or
+    running device, one should move the model before the export:
+
+    ```python
+    model = mlcolvar.graph.cvs.GraphDeepTICA(...)
+    model = model.to(troch.float64).to('CUDA')
+    dataset = mlcolvar.graph.data.load_dataet(...)
+    mlcolvar.graph.utils.export(cv, example_inputs=dataset[0])
+    ```
+
+    2. The exported models are generally MUCH FASTER when running on GPUs. Thus
+    it is strongly recommended to compile your `PLUMED` interface using the
+    CUDA version of LibTorch.
+
+    3. Unlike the JIT compilation, where the gradient calculation of the model
+    is done by `torch.autograd.grad` calls in a on-the-fly manner, computation
+    graph of the gradient calculation in exported models are statically
+    compiled. As a result, one can not change the Kolmogorov bias calculation
+    parameters at run time. Instead, these parameters should be given at
+    compilation time:
+
+    ```python
+    model = mlcolvar.graph.cvs.GraphCommittor(...)
+    dataset = mlcolvar.graph.data.load_dataet(...)
+    mlcolvar.graph.utils.export(
+        cv,
+        example_inputs=dataset[0],
+        file_name='model.k_bisa_lambda_1.0.pt2',
+        k_bias_options={'calculate_k_bias': True, 'kb_lambda': -1.0},
+    )
+    ```
+
+    If one would like the change these parameters, the model should be
+    re-exported using the updated parameters.
+    """
 
     torch._dynamo.allow_in_graph(torch.autograd.grad)
     torch._dynamo.allow_in_graph(torch.autograd.functional.jacobian)
@@ -484,6 +556,14 @@ def export(
 def load_exported(
     file_name: str,
 ) -> torch._inductor.package.package.AOTICompiledModel:
+    """
+    Load an exported CV model.
+
+    Parameters
+    ----------
+    file_name: str
+        Name of the `.pt2` file.
+    """
 
     model = torch._inductor.aoti_load_package(file_name)
 
