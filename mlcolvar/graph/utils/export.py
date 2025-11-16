@@ -329,7 +329,7 @@ def _get_model_summary(
 def _get_model_metadata(
     model: LightningModule,
     calculate_gradients: bool,
-    k_bias_options: Optional[Dict[str, Any]] = None,
+    k_bias_options: Optional[Dict[str, Any]] = {},
     model_summary_level: int = 3,
 ) -> Dict[str, str]:
 
@@ -365,9 +365,6 @@ def _get_model_metadata(
             metadata[
                 'atomic_masses_{:d}'.format(i)
             ] = str(model.atomic_masses[i].item())
-    else:
-        metadata['is_committor'] = str(False)
-    if is_committor and k_bias_options is not None:
         metadata_c = {
             'calculate_k_bias': False,
             'kb_epsilon': 1E-14 if model.dtype == torch.float64 else 1E-7,
@@ -379,6 +376,8 @@ def _get_model_metadata(
         for k in metadata_c.keys():
             metadata_c[k] = str(metadata_c[k])
         metadata.update(metadata_c)
+    else:
+        metadata['is_committor'] = str(False)
 
     metadata['calculate_gradients'] = str(calculate_gradients)
 
