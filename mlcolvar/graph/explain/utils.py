@@ -1,5 +1,4 @@
 import torch
-import torch._inductor.package
 import numpy as np
 import typing as tp
 
@@ -59,23 +58,8 @@ def get_dataset_cv_values(
 
     with torch.no_grad():
         for batchs in items:
-            if issubclass(type(model), gcvs.GraphBaseCV):
-                outputs = model(batchs.to(device).to_dict())
-                outputs = outputs.cpu().numpy()
-            elif (
-                type(model)
-                is torch._inductor.package.package.AOTICompiledModel
-            ):
-                outputs = model(
-                    gutils.export._dict_to_tensors(
-                        batchs.to(device).to_dict()
-                    )
-                )
-                outputs = outputs[0].cpu().numpy()
-            else:
-                raise TypeError(
-                    'Unknown model type: "{}"!'.format(type(model))
-                )
+            outputs = model(batchs.to(device).to_dict())
+            outputs = outputs.cpu().numpy()
             cv_values.append(outputs)
 
     return np.concatenate(cv_values)
@@ -129,28 +113,19 @@ def get_dataset_cv_gradients(
 
     for batchs in items:
         batch_dict = batchs.to(device).to_dict()
-        batch_dict['positions'].requires_grad_(True)
-
-        if issubclass(type(model), gcvs.GraphBaseCV):
-            cv_values = model(batch_dict)
-            cv_values = cv_values[:, component]
-            grad_outputs = [torch.ones_like(cv_values, device=device)]
-            gradients = torch.autograd.grad(
-                outputs=[cv_values],
-                inputs=[batch_dict['positions']],
-                grad_outputs=grad_outputs,
-                retain_graph=False,
-                create_graph=False,
-            )[0]
-        elif type(model) is torch._inductor.package.package.AOTICompiledModel:
-            outputs = model(gutils.export._dict_to_tensors(batch_dict))
-            gradients = outputs[1][component]
-        else:
-            raise TypeError('Unknown model type: "{}"!'.format(type(model)))
-
+        cv_values = model(batch_dict)
+        cv_values = cv_values[:, component]
+        grad_outputs = [torch.ones_like(cv_values, device=device)]
+        gradients = torch.autograd.grad(
+            outputs=[cv_values],
+            inputs=[batch_dict['positions']],
+            grad_outputs=grad_outputs,
+            retain_graph=False,
+            create_graph=False,
+        )
         graph_sizes = batch_dict['ptr'][1:] - batch_dict['ptr'][:-1]
         gradients = torch.split(
-            gradients.detach(), graph_sizes.cpu().numpy().tolist()
+            gradients[0].detach(), graph_sizes.cpu().numpy().tolist()
         )
         gradients = [g.cpu().numpy() for g in gradients]
         cv_value_gradients.extend(gradients)
