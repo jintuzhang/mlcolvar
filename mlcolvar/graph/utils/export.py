@@ -365,6 +365,8 @@ def _get_model_metadata(
             metadata[
                 'atomic_masses_{:d}'.format(i)
             ] = str(model.atomic_masses[i].item())
+    else:
+        metadata['is_committor'] = str(False)
     if is_committor and k_bias_options is not None:
         metadata_c = {
             'calculate_k_bias': False,
@@ -377,8 +379,6 @@ def _get_model_metadata(
         for k in metadata_c.keys():
             metadata_c[k] = str(metadata_c[k])
         metadata.update(metadata_c)
-    else:
-        metadata['is_committor'] = str(False)
 
     metadata['calculate_gradients'] = str(calculate_gradients)
 
