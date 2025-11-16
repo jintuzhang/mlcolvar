@@ -13,6 +13,8 @@ from torch.fx.experimental.proxy_tensor import make_fx
 
 from mlcolvar.graph.utils import torch_tools
 
+os.environ['TORCHINDUCTOR_FREEZING'] = '1'
+
 """
 Helper functions for exporting a model.
 """
@@ -482,6 +484,20 @@ def export(
 
     If one would like the change these parameters, the model should be
     re-exported using the updated parameters.
+
+    4. When using CUDA, the export operation requires the CUDA library. Make
+    sure that PyTorch is able to find the library, e.g., setting the following
+    environment variables before doing the export:
+
+    ```bash
+    export CUDA_HOME=/usr/local/cuda-12.9
+    export PATH=$PATH:/usr/local/cuda-12.9/bin
+    export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/cuda-12.9/lib64
+    export C_INCLUDE_PATH=$C_INCLUDE_PATH:/usr/local/cuda-12.9/include
+    ```
+
+    5. The exported models are NOT portable, they will not run on machines
+    other than the one where there were exported.
     """
 
     torch._dynamo.allow_in_graph(torch.autograd.grad)
