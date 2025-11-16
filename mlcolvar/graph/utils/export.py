@@ -555,12 +555,11 @@ def export(
             'renamed file name "{:s}" to "{:s}"!'.format(file_name, tmp)
         )
         file_name = tmp
+    output_path = torch._inductor.package.package_aoti(file_name, aot_files)
 
     metadata = _get_model_metadata(
         model, calculate_gradients, k_bias_options, model_summary_level
     )
-    output_path = torch._inductor.package.package_aoti(file_name, aot_files)
-
     _update_package_metadata(file_name, metadata)
 
     torch_tools.scatter_sum = scatter_sum
