@@ -329,7 +329,7 @@ def _get_model_summary(
 def _get_model_metadata(
     model: LightningModule,
     calculate_gradients: bool,
-    k_bias_options: Optional[Dict[str, Any]] = {},
+    k_bias_options: Optional[Dict[str, Any]] = None,
     model_summary_level: int = 3,
 ) -> Dict[str, str]:
 
@@ -365,16 +365,9 @@ def _get_model_metadata(
             metadata[
                 'atomic_masses_{:d}'.format(i)
             ] = str(model.atomic_masses[i].item())
-        metadata_c = {
-            'calculate_k_bias': False,
-            'kb_epsilon': 1E-14 if model.dtype == torch.float64 else 1E-7,
-            'kb_lambda': -1.0,
-            'kb_truncated': False,
-            'kb_weighted': False,
-        }
-        metadata_c.update(k_bias_options)
-        for k in metadata_c.keys():
-            metadata_c[k] = str(metadata_c[k])
+        metadata_c = {}
+        for k in k_bias_options.keys():
+            metadata_c[k] = str(k_bias_options[k])
         metadata.update(metadata_c)
     else:
         metadata['is_committor'] = str(False)
@@ -404,12 +397,35 @@ def _update_package_metadata(file_name: str, data: Dict[str, str]) -> None:
     os.rename(tmp_file_name, file_name)
 
 
+def _regularize_k_bias_options(
+    model: LightningModule,
+    k_bias_options: Optional[Dict[str, Any]] = None
+) -> Dict[str, Any]:
+
+    results = {
+        'calculate_k_bias': False,
+        'kb_epsilon': 1E-14 if model.dtype == torch.float64 else 1E-7,
+        'kb_lambda': -1.0,
+        'kb_truncated': False,
+        'kb_weighted': False,
+    }
+
+    if k_bias_options is not None:
+        for k in k_bias_options.keys():
+            if k in ['calculate_k_bias', 'kb_truncated', 'kb_weighted']:
+                results[k] = bool(k_bias_options[k])
+            if k in ['kb_epsilon', 'kb_lambda']:
+                results[k] = float(k_bias_options[k])
+
+    return results
+
+
 def export(
     model: LightningModule,
     example_inputs: tg.data.Data,
     file_name: str = 'model.pt2',
     calculate_gradients: bool = True,
-    k_bias_options: Optional[Dict[str, Any]] = {},
+    k_bias_options: Optional[Dict[str, Any]] = None,
     model_summary_level: int = 3,
 ) -> str:
     """
@@ -514,18 +530,7 @@ def export(
     is_committor = hasattr(model, 'is_committor') and model.is_committor == 1
 
     if is_committor:
-        for k in k_bias_options.keys():
-            if k in [
-                'calculate_k_bias',
-                'kb_truncated',
-                'kb_weighted',
-            ]:
-                k_bias_options[k] = bool(k_bias_options[k])
-            if k in [
-                'kb_epsilon',
-                'kb_lambda',
-            ]:
-                k_bias_options[k] = float(k_bias_options[k])
+        k_bias_options = _regularize_k_bias_options(model, k_bias_options)
         exportable = ExportableCommittor(
             model, calculate_gradients, **k_bias_options
         )
