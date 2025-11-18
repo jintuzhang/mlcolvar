@@ -1,8 +1,8 @@
 import os
 import json
 import uuid
-import warnings
 import zipfile
+import warnings
 
 import torch
 import torch._inductor.package
@@ -22,6 +22,18 @@ Helper functions for exporting a model.
 __all__ = ['export', 'load_exported']
 
 
+_MODEL_INPUT_TYPE = eval(
+    'Tuple[{}]'.format(''.join(['torch.Tensor,' for _ in range(14)]))
+)
+_MODEL_OUTPUT_TYPE = eval(
+    'Tuple[{}]'.format(''.join(['torch.Tensor,' for _ in range(4)]))
+)
+
+_EXCLUDED_ARRG_MODULES = [
+    'MedianAggregation', 'MinAggregation', 'MaxAggregation'
+]
+
+
 class ExportableCV(torch.nn.Module):
 
     def __init__(
@@ -34,9 +46,9 @@ class ExportableCV(torch.nn.Module):
 
     def forward(
         self,
-        data: Tuple[torch.Tensor],
-        token: bool = False
-    ) -> Tuple[torch.Tensor]:
+        data: _MODEL_INPUT_TYPE,
+        token: bool = False,
+    ) -> _MODEL_OUTPUT_TYPE:
 
         data = _tensors_to_dict(data)
 
@@ -75,7 +87,13 @@ class ExportableCV(torch.nn.Module):
             outputs,
             gradients if self._calculate_gradients else torch.tensor(
                 0, device=outputs.device, dtype=outputs.dtype
-            )
+            ),
+            torch.tensor(
+                0, device=outputs.device, dtype=outputs.dtype
+            ),
+            torch.tensor(
+                0, device=outputs.device, dtype=outputs.dtype
+            ),
         )
 
         return results
@@ -117,9 +135,9 @@ class ExportableCommittor(torch.nn.Module):
 
     def forward(
         self,
-        data: Tuple[torch.Tensor],
-        token: bool = False
-    ) -> Tuple[torch.Tensor]:
+        data: _MODEL_INPUT_TYPE,
+        token: bool = False,
+    ) -> _MODEL_OUTPUT_TYPE:
 
         data = _tensors_to_dict(data)
 
@@ -397,6 +415,19 @@ def _update_package_metadata(file_name: str, data: Dict[str, str]) -> None:
     os.rename(tmp_file_name, file_name)
 
 
+def _check_aggr_modules(model: LightningModule) -> None:
+
+    # TODO: find a better way of checking the module names
+    model_summary = _get_model_summary('', model, 100, 0)
+    for name in _EXCLUDED_ARRG_MODULES:
+        if name in model_summary:
+            message = (
+                'Aggregation modules {} can not be correctly exported on some '
+                + 'machines, and your input model contains the {} module!'
+            )
+            raise RuntimeError(message.format(_EXCLUDED_ARRG_MODULES, name))
+
+
 def _regularize_k_bias_options(
     model: LightningModule,
     k_bias_options: Optional[Dict[str, Any]] = None
@@ -472,7 +503,7 @@ def export(
     model = mlcolvar.graph.cvs.GraphDeepTICA(...)
     model = model.to(troch.float64).to('CUDA')
     dataset = mlcolvar.graph.data.load_dataet(...)
-    mlcolvar.graph.utils.export(cv, example_inputs=dataset[0])
+    mlcolvar.graph.utils.export.export(cv, example_inputs=dataset[0])
     ```
 
     2. The exported models are generally MUCH FASTER when running on GPUs. Thus
@@ -489,7 +520,7 @@ def export(
     ```python
     model = mlcolvar.graph.cvs.GraphCommittor(...)
     dataset = mlcolvar.graph.data.load_dataet(...)
-    mlcolvar.graph.utils.export(
+    mlcolvar.graph.utils.export.export(
         cv,
         example_inputs=dataset[0],
         file_name='model.k_bisa_lambda_1.0.pt2',
@@ -513,7 +544,16 @@ def export(
 
     5. The exported models are NOT portable, they will not run on machines
     other than the one where there were exported.
+
+    6. Some `torch_geometric` aggregation modules, e.g., `MedianAggregation`,
+    `MinAggregation` and `MaxAggregation`, can not be exported correctly on
+    some machines (the exported model can not calculate gradients correctly).
+    Thus, avoid using these aggregation modules. See the
+    `mlcolvar.graph.utils.export._EXCLUDED_ARRG_MODULES` attribute for the
+    name of these modules.
     """
+
+    _check_aggr_modules(model)
 
     torch._dynamo.allow_in_graph(torch.autograd.grad)
     torch._dynamo.allow_in_graph(torch.autograd.functional.jacobian)
@@ -539,8 +579,8 @@ def export(
 
     # taken from: https://depyf.readthedocs.io/en/latest/walk_through.html
     def forward_and_backward(
-        _inputs: Tuple[torch.Tensor], kwargs: Dict[str, Any] = {}
-    ) -> Dict[str, torch.Tensor]:
+        _inputs: _MODEL_INPUT_TYPE, kwargs: Dict[str, Any] = {}
+    ) -> _MODEL_OUTPUT_TYPE:
         return exportable(_inputs, False)
 
     wrapped_function = make_fx(
@@ -602,8 +642,6 @@ def test_export_schnet() -> None:
         n_layers=2,
         n_filters=16,
         n_hidden_channels=16,
-        aggr='min',
-        w_out_after_sum=True
     )
     model.n_cvs = model.n_out
     model.training_time = torch.zeros(7, dtype=int)
@@ -628,7 +666,7 @@ def test_export_schnet() -> None:
     assert (
         torch.abs(
             model_c(_dict_to_tensors(data_dict))[0]
-            - torch.tensor([[0.3654537816221449, -0.0748265132499575]])
+            - torch.tensor([[0.40384621527953063, -0.1257513365138969]])
         ) < 1E-12
     ).all()
 
