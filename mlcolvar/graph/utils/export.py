@@ -652,6 +652,7 @@ def test_export_schnet() -> None:
     model.training_time = torch.zeros(7, dtype=int)
     model.dtype = torch.float64
     model.device = 'cpu'
+    model._get_time = lambda: [0] * 7
 
     batch = __import__('mlcolvar').graph.core.nn.models.test_get_data()
     dataset = batch.to_data_list()[0]
@@ -737,6 +738,7 @@ def test_export_painn() -> None:
     model.training_time = torch.zeros(7, dtype=int)
     model.dtype = torch.float64
     model.device = 'cpu'
+    model._get_time = lambda: [0] * 7
 
     batch = __import__('mlcolvar').graph.core.nn.models.test_get_data()
     dataset = batch.to_data_list()[0]
