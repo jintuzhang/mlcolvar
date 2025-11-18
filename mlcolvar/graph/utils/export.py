@@ -370,6 +370,11 @@ def _get_model_metadata(
     ).format(
         *(model.training_time.cpu().numpy().tolist()),
     )
+    metadata['exporting_time'] = (
+        'UTC{:+d} {:d}-{:02d}-{:02d} {:02d}:{:02d}:{:02d}'
+    ).format(
+        *(model._get_time()),
+    )
     metadata['model_summary'] = _get_model_summary(
         'CV', model, model_summary_level, 0
     )
