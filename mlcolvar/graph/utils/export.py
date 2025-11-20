@@ -29,7 +29,7 @@ _MODEL_OUTPUT_TYPE = eval(
     'Tuple[{}]'.format(''.join(['torch.Tensor,' for _ in range(4)]))
 )
 
-_EXCLUDED_ARRG_MODULES = [
+_EXCLUDED_AGGR_MODULES = [
     'MedianAggregation', 'MinAggregation', 'MaxAggregation'
 ]
 
@@ -424,13 +424,13 @@ def _check_aggr_modules(model: LightningModule) -> None:
 
     # TODO: find a better way of checking the module names
     model_summary = _get_model_summary('', model, 100, 0)
-    for name in _EXCLUDED_ARRG_MODULES:
+    for name in _EXCLUDED_AGGR_MODULES:
         if name in model_summary:
             message = (
                 'Aggregation modules {} can not be correctly exported on some '
                 + 'machines, and your input model contains the {} module!'
             )
-            raise RuntimeError(message.format(_EXCLUDED_ARRG_MODULES, name))
+            raise RuntimeError(message.format(_EXCLUDED_AGGR_MODULES, name))
 
 
 def _regularize_k_bias_options(
@@ -554,7 +554,7 @@ def export(
     `MinAggregation` and `MaxAggregation`, can not be exported correctly on
     some machines (the exported model can not calculate gradients correctly).
     Thus, avoid using these aggregation modules. See the
-    `mlcolvar.graph.utils.export._EXCLUDED_ARRG_MODULES` attribute for the
+    `mlcolvar.graph.utils.export._EXCLUDED_AGGR_MODULES` attribute for the
     name of these modules.
     """
 
