@@ -8,8 +8,9 @@ import torch
 import torch._inductor.package
 import torch_geometric as tg
 from lightning import LightningModule
-from typing import Dict, Tuple, Optional, Any, List
 from torch.fx.experimental.proxy_tensor import make_fx
+
+from typing import Dict, Tuple, Optional, Any, List, Union
 
 from mlcolvar.graph.utils import torch_tools
 
@@ -456,6 +457,68 @@ def _regularize_k_bias_options(
     return results
 
 
+def _check_exported_model_outputs(
+    file_name: str,
+    model: Union[ExportableCV, ExportableCommittor],
+    example_inputs: _MODEL_INPUT_TYPE,
+) -> None:
+
+    print('Export precision check:')
+
+    def check_mae(x: float, dtype: str, prefix: str) -> bool:
+        if dtype == '32':
+            tol = os.environ.get('MLCOLVAR_FLOAT_TOL', 1E-6)
+        elif dtype == '64':
+            tol = os.environ.get('MLCOLVAR_FLOAT_TOL', 1E-12)
+        else:
+            raise RuntimeError('Unknown dtype ' + dtype)
+
+        if x > tol:
+            raise RuntimeError(
+                'MAE ({:e}) of {:s} is larger than '.format(mae, prefix)
+                + '{:e} for a float{:s} model!'.format(tol, delta)
+            )
+        else:
+            print('  MAE of {:s}: {:e}'.format(prefix, mae))
+
+    aot_model = load_exported(file_name)
+    metadata = aot_model.get_metadata()
+    float_dtype = metadata['float_dtype']
+
+    model_outputs = model(example_inputs)
+    aot_model_outputs = aot_model(example_inputs)
+
+    delta = model_outputs[0] - aot_model_outputs[0]
+    mae = delta.abs().max().item()
+    check_mae(mae, float_dtype, 'CV values')
+
+    if (
+        (not eval(metadata['is_committor']))
+        and eval(metadata['calculate_gradients'])
+    ):
+
+        for i in range(eval(metadata['n_cvs'])):
+            delta_i = model_outputs[1][i] - aot_model_outputs[1][i]
+            mae = delta_i.abs().max().item()
+            check_mae(mae, float_dtype, 'CV gradients {:d}'.format(i))
+
+    elif eval(metadata['is_committor']):
+
+        delta_z = model_outputs[1][0] - aot_model_outputs[1][0]
+        mae = delta_z.abs().max().item()
+        check_mae(mae, float_dtype, 'CV gradients')
+
+        if eval(metadata['calculate_k_bias']):
+
+            delta_k = model_outputs[2] - aot_model_outputs[2]
+            mae = delta_k.abs().max().item()
+            check_mae(mae, float_dtype, 'KBias')
+
+            delta_k = model_outputs[3][0] - aot_model_outputs[3][0]
+            mae = delta_k.abs().max().item()
+            check_mae(mae, float_dtype, 'KBias gradients')
+
+
 def export(
     model: LightningModule,
     example_inputs: tg.data.Data,
@@ -610,6 +673,7 @@ def export(
         model, calculate_gradients, k_bias_options, model_summary_level
     )
     _update_package_metadata(file_name, metadata)
+    _check_exported_model_outputs(file_name, exportable, inputs)
 
     torch_tools.scatter_sum = scatter_sum
     torch_tools.scatter_mean = scatter_mean
