@@ -467,16 +467,16 @@ def _check_exported_model_outputs(
 
     def check_mae(x: float, dtype: str, prefix: str) -> bool:
         if dtype == '32':
-            tol = os.environ.get('MLCOLVAR_FLOAT_TOL', 1E-6)
+            tol = eval(os.environ.get('MLCOLVAR_FLOAT_TOL', '1E-6'))
         elif dtype == '64':
-            tol = os.environ.get('MLCOLVAR_FLOAT_TOL', 1E-12)
+            tol = eval(os.environ.get('MLCOLVAR_FLOAT_TOL', '1E-12'))
         else:
             raise RuntimeError('Unknown dtype ' + dtype)
 
         if x > tol:
             raise RuntimeError(
                 'MAE ({:e}) of {:s} is larger than '.format(mae, prefix)
-                + '{:e} for a float{:s} model!'.format(tol, delta)
+                + '{:e} for a float{:s} model!'.format(tol, dtype)
             )
         else:
             print('  MAE of {:s}: {:e}'.format(prefix, mae))
