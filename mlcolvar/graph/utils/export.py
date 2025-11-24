@@ -16,6 +16,18 @@ from mlcolvar.graph.utils import torch_tools
 
 os.environ['TORCHINDUCTOR_FREEZING'] = '1'
 
+if os.environ.get('MLCOLVAR_EXPORT_MAXIMUM_OPT') == '1':
+
+    torch._inductor.config.max_autotune = True
+    torch._inductor.config.max_autotune_gemm = True
+    torch._inductor.config.cuda.compile_opt_level = '-O3'
+    if hasattr(
+        torch._inductor.config.aot_inductor, 'compile_wrapper_opt_level'
+    ):
+        torch._inductor.config.aot_inductor.compile_wrapper_opt_level = 'O3'
+
+    os.environ['MLCOLVAR_FLOAT_TOL'] = '1E-4'
+
 """
 Helper functions for exporting a model.
 """
