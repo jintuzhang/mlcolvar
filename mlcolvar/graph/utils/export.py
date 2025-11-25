@@ -26,7 +26,7 @@ if os.environ.get('MLCOLVAR_EXPORT_MAXIMUM_OPT') == '1':
     ):
         torch._inductor.config.aot_inductor.compile_wrapper_opt_level = 'O3'
 
-    os.environ['MLCOLVAR_FLOAT_TOL'] = '1E-4'
+    os.environ['MLCOLVAR_EXPORT_FLOAT_TOL'] = '1E-4'
 
 """
 Helper functions for exporting a model.
@@ -479,9 +479,9 @@ def _check_exported_model_outputs(
 
     def check_mae(x: float, dtype: str, prefix: str) -> bool:
         if dtype == '32':
-            tol = eval(os.environ.get('MLCOLVAR_FLOAT_TOL', '1E-6'))
+            tol = eval(os.environ.get('MLCOLVAR_EXPORT_FLOAT_TOL', '1E-6'))
         elif dtype == '64':
-            tol = eval(os.environ.get('MLCOLVAR_FLOAT_TOL', '1E-12'))
+            tol = eval(os.environ.get('MLCOLVAR_EXPORT_FLOAT_TOL', '1E-12'))
         else:
             raise RuntimeError('Unknown dtype ' + dtype)
 
