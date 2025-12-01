@@ -14,10 +14,9 @@ from typing import Dict, Tuple, Optional, Any, List, Union
 
 from mlcolvar.graph.utils import torch_tools
 
-os.environ['TORCHINDUCTOR_FREEZING'] = '1'
-
 if os.environ.get('MLCOLVAR_EXPORT_MAXIMUM_OPT') == '1':
 
+    torch._inductor.config.freezing = True
     torch._inductor.config.max_autotune = True
     torch._inductor.config.max_autotune_gemm = True
     torch._inductor.config.cuda.compile_opt_level = '-O3'
