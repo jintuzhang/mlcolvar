@@ -97,7 +97,7 @@ class GraphBaseCV(lightning.LightningModule):
             **model_options
         )
 
-        self.__exporting = False
+        self._exporting_flag = False
         self._optimizer_name = 'Adam'
         self.optimizer_kwargs = {}
         self.lr_scheduler_kwargs = {}
@@ -285,12 +285,12 @@ class GraphBaseCV(lightning.LightningModule):
     @property
     def _exporting(self) -> bool:
 
-        return self.__exporting
+        return self._exporting_flag
 
     @_exporting.setter
     def _exporting(self, v: bool) -> None:
 
-        self.__exporting = bool(v)
+        self._exporting_flag = bool(v)
 
 
 def test_get_data() -> tg.data.Batch:
