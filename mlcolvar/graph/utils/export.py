@@ -641,6 +641,7 @@ def export(
     inputs = _dict_to_tensors(inputs)
 
     # I hate monkey patch ...
+    model._exporting = True
     scatter_sum = torch_tools.scatter_sum
     scatter_mean = torch_tools.scatter_mean
     torch_tools.scatter_sum = _scatter_sum_static
@@ -688,6 +689,7 @@ def export(
 
     torch_tools.scatter_sum = scatter_sum
     torch_tools.scatter_mean = scatter_mean
+    model._exporting = False
 
     return output_path
 
