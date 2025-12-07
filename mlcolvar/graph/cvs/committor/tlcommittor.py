@@ -122,8 +122,10 @@ class GraphTimeLaggedCommittor(GraphBaseCV):
         token: bool
             To be used.
         """
-        data['positions'].requires_grad_(True)
-        data['node_attrs'].requires_grad_(True)
+
+        if not self._exporting:
+            data['positions'].requires_grad_(True)
+            data['node_attrs'].requires_grad_(True)
 
         return self._model(data)
 

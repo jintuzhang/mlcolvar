@@ -1,4 +1,5 @@
 import torch
+import warnings
 import torch_geometric as tg
 from typing import Dict, Any, List
 
@@ -105,6 +106,10 @@ class GraphDeepTICA(GraphBaseCV):
         self._use_sigmoid = extra_loss_options.pop('use_sigmoid', False)
         if self._use_sigmoid:
             self.sigmoid = Custom_Sigmoid(p=3)
+            warnings.warn(
+                '\n\nThe `use_sigmoid` functionality is for testing only '
+                + 'and may lead to wrong results!\n'
+            )
 
         self.loss_fn = ReduceEigenvaluesLoss(**extra_loss_options)
 
@@ -126,8 +131,10 @@ class GraphDeepTICA(GraphBaseCV):
         token: bool
             To be used.
         """
-        data['positions'].requires_grad_(True)
-        data['node_attrs'].requires_grad_(True)
+
+        if not self._exporting:
+            data['positions'].requires_grad_(True)
+            data['node_attrs'].requires_grad_(True)
 
         return self._model(data)
 

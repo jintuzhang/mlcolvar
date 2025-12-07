@@ -97,6 +97,7 @@ class GraphBaseCV(lightning.LightningModule):
             **model_options
         )
 
+        self._exporting_flag = False
         self._optimizer_name = 'Adam'
         self.optimizer_kwargs = {}
         self.lr_scheduler_kwargs = {}
@@ -171,8 +172,10 @@ class GraphBaseCV(lightning.LightningModule):
         token: bool
             To be used.
         """
-        data['positions'].requires_grad_(True)
-        data['node_attrs'].requires_grad_(True)
+
+        if not self._exporting:
+            data['positions'].requires_grad_(True)
+            data['node_attrs'].requires_grad_(True)
 
         return self._model(data)
 
@@ -278,6 +281,16 @@ class GraphBaseCV(lightning.LightningModule):
         loader.setup()
 
         return next(iter(loader.train_dataloader()))
+
+    @property
+    def _exporting(self) -> bool:
+
+        return self._exporting_flag
+
+    @_exporting.setter
+    def _exporting(self, v: bool) -> None:
+
+        self._exporting_flag = bool(v)
 
 
 def test_get_data() -> tg.data.Batch:
