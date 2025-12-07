@@ -70,7 +70,7 @@ class GraphDeepTDA(GraphBaseCV):
         model_name: str = 'GVPModel',
         model_options: Dict[Any, Any] = {},
         extra_loss_options: Dict[Any, Any] = {
-            'alpha': 1.0, 'beta': 100.0, 'gamma': 50.0,
+            'alpha': 1.0, 'beta': 100.0, 'gamma': 0.0,
         },
         optimizer_options: Dict[Any, Any] = {},
         **kwargs,
@@ -123,7 +123,7 @@ class GraphDeepTDA(GraphBaseCV):
         elif len(target_centers.shape) > 2:
             raise ValueError('Too much target_centers dimensions!')
 
-        self._gamma = extra_loss_options.pop('gamma', 50.0)
+        self._gamma = extra_loss_options.pop('gamma', 0.0)
         self.loss_fn = TDALoss(
             n_states=target_centers.shape[0],
             target_centers=target_centers,
