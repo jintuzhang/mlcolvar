@@ -138,13 +138,42 @@ def create_timelagged_datasets(
 
     # find pairs of configurations separated by lag_time
     index = torch.arange(len(dataset), dtype=torch.long)
-    x_t, x_lag, w_t, w_lag = find_timelagged_configurations(
-        index,
-        tprime,
-        lag_time=lag_time,
-        logweights=logweights if reweight_mode == 'weights_t' else None,
-        progress_bar=progress_bar,
-    )
+    if reweight_mode is None or reweight_mode == 'weights_t':
+        dt = float(t[1] - t[0]) if len(t) > 1 else 1.0
+        lag_steps = int(round(lag_time / dt))
+
+        if lag_steps < 1:
+            raise ValueError('lag_time is too small!')
+        if lag_steps >= len(index):
+            raise ValueError('lag_time is too large!')
+
+        # pairs
+        x_t = index[:-lag_steps]
+        x_lag = index[lag_steps:]
+
+        # weights
+        if reweight_mode is None:
+            w_t = torch.ones(len(x_t))
+            w_lag = torch.ones(len(x_lag))
+        else:
+            logweights = torch.tensor(logweights, dtype=torch.float32)
+            weights = torch.exp(logweights)
+            w_t = weights[:-lag_steps]
+            w_lag = weights[lag_steps:]
+
+    elif reweight_mode == 'rescale_time':
+        x_t, x_lag, w_t, w_lag = find_timelagged_configurations(
+            index,
+            tprime,
+            lag_time=lag_time,
+            logweights=logweights if reweight_mode == "weights_t" else None,
+            progress_bar=progress_bar,
+        )
+    else:
+        raise ValueError(
+            f'Unknown reweight_mode "{reweight_mode}". '
+            'Supported modes are: None, "weights_t" and "rescale_time".'
+        )
 
     # return only a slice of the data (N. Pedrani)
     if interval is not None:
