@@ -1,0 +1,657 @@
+import torch
+from torch import nn
+import numpy as np
+import torch_geometric as tg
+from typing import List, Dict, Optional, Any
+
+from mlcolvar.pairformer import data as pdata
+from mlcolvar.pairformer.core.nn import radial
+from mlcolvar.pairformer.core.nn import pairformer
+from mlcolvar.pairformer.utils import torch_tools
+
+"""
+PairFormer models.
+"""
+
+__all__ = ['BaseModel', 'PairFormerModel']
+
+
+class BaseModel(nn.Module):
+    """
+    The commen PairFormer interface for mlcolvar.
+
+    Parameters
+    ----------
+    n_out: int
+        Size of the output node features.
+    cutoff: float
+        Cutoff radius of the basis functions.
+    n_bases: int
+        Size of the basis set.
+    n_polynomials: int
+        Order of the polynomials in the basis functions.
+    basis_type: str
+        Type of the basis function.
+    """
+
+    def __init__(
+        self,
+        n_out: int,
+        cutoff: float,
+        n_bases: int = 6,
+        n_polynomials: int = 6,
+        basis_type: str = 'gaussian'
+    ) -> None:
+        super().__init__()
+        self._n_out = n_out
+
+        if cutoff > 0:
+            self._radial_embedding = radial.RadialEmbeddingBlock(
+                cutoff, -1.0, n_bases, n_polynomials, basis_type
+            )
+        else:
+            self._radial_embedding = None
+
+        self.register_buffer(
+            'n_out', torch.tensor(n_out, dtype=torch.int64)
+        )
+        self.register_buffer(
+            'cutoff', torch.tensor(cutoff, dtype=torch.get_default_dtype())
+        )
+
+
+class FFNNModel(BaseModel):
+    """
+    Fully connected distances matrix + feedforward network.
+
+    Parameters
+    ----------
+    n_out: int
+        Size of the output node features.
+    n_distances: int
+        Number of input distances, should be equal to square of atom numbers.
+    mapping_names: Dict[str, List[str]]
+        Placeholder.
+    cutoff: float
+        Placeholder.
+    layers: List[int]
+        Number of interaction layers.
+    drop_rate: float
+        Placeholder.
+    activation: str
+        Name of the activation function (case sensitive).
+    """
+
+    def __init__(
+        self,
+        n_out: int,
+        n_distances: int,
+        mapping_names: Dict[str, List[str]] = {},
+        cutoff: float = -1.0,
+        hidden_layers: List[int] = [8],
+        drop_rate: float = 0.0,
+        activation: str = 'SiLU',
+    ) -> None:
+
+        super().__init__(n_out, -1.0, 2, 0)
+
+        self.n_distances = n_distances
+        hidden_layers = [n_distances, *hidden_layers, n_out]
+
+        layers = nn.ModuleList()
+        for i in range(len(hidden_layers) - 1):
+            layers.append(nn.Linear(hidden_layers[i], hidden_layers[i + 1]))
+            layers.append(eval(f'torch.nn.{activation}')())
+        self.layers = layers
+
+        self._mapping_names = {}
+
+    def reset_parameters(self) -> None:
+
+        for m in self.layers:
+            if m.__class__.__name__ == 'Linear':
+                nn.init.xavier_uniform_(m.weight)
+                m.bias.data.fill_(0)
+
+    def forward(
+        self, data: Dict[str, torch.Tensor], scatter_mean: bool = True
+    ) -> torch.Tensor:
+        """
+        The forward pass.
+
+        Parameters
+        ----------
+        data: Dict[str, torch.Tensor]
+            The data dict. Usually came from the `to_dict` method of a
+            `torch_geometric.data.Batch` object.
+        scatter_mean: bool
+            If perform the scatter mean to the model output.
+        """
+
+        cell = data['cell']
+        node_attrs = data['node_attrs']
+        n_graphs = data['ptr'].numel() - 1
+        n_atoms = len(data['positions']) // n_graphs
+
+        assert n_atoms * n_atoms == self.n_distances, (
+            'Number of the input disntances does not equal to shape of the '
+            + 'first NN layer!'
+        )
+
+        node_attrs = node_attrs.reshape(n_graphs, n_atoms, node_attrs.shape[1])
+
+        edge_index_fc = torch_tools.ptr_to_edge_index_fc(
+            torch.arange(n_graphs + 1, device=node_attrs.device) * n_atoms,
+            n_atoms,
+        )
+        n_edges_per_graph = torch.ones(
+            n_graphs, dtype=torch.long, device=node_attrs.device
+        ) * (n_atoms * n_atoms)
+        if cell.shape[1] != 3:
+            _, pair_lengths = torch_tools.get_edge_vectors_and_lengths(
+                positions=data['positions'],
+                edge_index=edge_index_fc,
+                shifts=torch.tensor(0.0, device=cell.device, dtype=cell.dtype),
+                eps=1E-7,
+            )
+        else:
+            cell = cell.reshape(n_graphs, 3, 3)
+            _, pair_lengths = torch_tools.get_mic_distances(
+                positions=data['positions'],
+                edge_index=edge_index_fc,
+                cells=cell,
+                n_edges=n_edges_per_graph,
+                normalize=False,
+                eps=1E-7,
+            )
+
+        h = pair_lengths.reshape((n_graphs, n_atoms * n_atoms))
+
+        for layer in self.layers:
+            h = layer(h)
+
+        return h
+
+
+class PairFormerModel(BaseModel):
+    """
+    The PairFormer model used in AlphaFold 3 [1]. This implementation is taken
+    from Protinix: https://github.com/bytedance/Protenix by Zichang Jin.
+
+    Parameters
+    ----------
+    n_out: int
+        Size of the output node features.
+    mapping_names: Dict[str, List[str]]
+        The node embedding mapping name lists, e.g. the `mapping_names`
+        attribute of a `mlcolvar.pairformer.data.PairDataSet` instance.
+    cutoff: float
+        Cutoff radius of the basis functions. If a negative value is given,
+        will not use radial basis functions to expand distances.
+    n_bases: int
+        Size of the basis set.
+    n_layers: int
+        Number of interaction layers.
+    n_heads_apb: int
+        Number of attention heads in AttentionPairBias.
+    n_heads_pair: int
+        Number of attention heads in TriangleAttention.
+    n_embedding_pair: int
+        Size of the pair embedding array.
+    n_hidden_channels_mul: int
+        Size of the hidden channels in TriangleMultiplicationOutgoing.
+    n_hidden_channels_pair: int
+        Size of the hidden channels in TriangleAttention.
+    drop_rate: float
+        Drop probability in all dropout layers.
+    triangle_attention: str
+        Type of the triangle attention implementation. Valid options are:
+        - 'triattention': Optimized tri-attention module
+        - 'torch': PyTorch native implementation
+        Note that when applying the model in Committor tasks, this option HAS
+        to be 'torch'.
+    triangle_multiplicative: Triangle multiplicative implementation type.
+        - 'torch': PyTorch native implementation
+        - None: Disable triangle update
+    pair_transition: bool
+        If apply pair transition.
+    n_polynomials: int
+        Order of the polynomials in the basis functions.
+
+    References
+    ----------
+    .. [1] Abramson, Josh, et al. "Accurate structure prediction of
+        biomolecular interactions with AlphaFold 3."
+        Nature 630.8016 (2024): 493-500.
+    """
+
+    def __init__(
+        self,
+        n_out: int,
+        mapping_names: Dict[str, List[str]],
+        cutoff: float = -1.0,
+        n_bases: int = 0,
+        n_layers: int = 1,
+        n_heads_apb: int = 1,
+        n_heads_pair: int = 1,
+        n_embedding_pair: int = 8,
+        n_hidden_channels_mul: int = 16,
+        n_hidden_channels_pair: int = 16,
+        drop_rate: float = 0.0,
+        triangle_attention: str = 'torch',
+        triangle_multiplicative: str = 'torch',
+        pair_transition: bool = True,
+        n_polynomials: int = 0,
+        cn_options: Optional[Dict[str, Any]] = None,
+    ) -> None:
+
+        if n_bases <= 0:
+            n_bases = n_embedding_pair
+
+        super().__init__(n_out, cutoff, n_bases, n_polynomials, 'gaussian')
+
+        n_embedding = n_embedding_pair // 2
+        n_embedders = len(mapping_names.keys())
+
+        self.embedders = torch.nn.ModuleList([])
+        for emb in pdata.dataset.__implemented_embeddings__:
+            if emb in mapping_names.keys():
+                self.embedders.append(
+                    torch.nn.Embedding(len(mapping_names[emb]), n_embedding)
+                )
+
+        self.W_p = torch.nn.Linear(
+            n_embedders * n_embedding * 2 + n_embedding_pair, n_embedding_pair
+        )
+        if cutoff < 0:
+            self.W_x = torch.nn.Linear(1, n_embedding_pair, bias=False)
+        else:
+            self.W_x = None
+        if cutoff > 0 and n_bases != n_embedding_pair:
+            self.W_b = torch.nn.Linear(n_bases, n_embedding_pair, bias=False)
+        else:
+            self.W_b = None
+
+        self.layers = torch.nn.ModuleList([
+            pairformer.PairformerBlock(
+                n_heads=n_heads_apb,
+                c_z=n_embedding_pair,
+                c_s=0,
+                c_hidden_mul=n_hidden_channels_mul,
+                c_hidden_pair_att=n_hidden_channels_pair,
+                no_heads_pair=n_heads_pair,
+                dropout=drop_rate,
+                triangle_multiplicative=triangle_multiplicative,
+                triangle_attention=triangle_attention,
+                pair_transition=pair_transition,
+            ) for _ in range(n_layers)
+        ])
+
+        if cn_options is not None:
+            n_out_w_c = len(cn_options['centers']) * 2
+            self.cn_layer = CNModel(**cn_options)
+            self.W_c = torch.nn.Linear(n_out_w_c // 2, n_out_w_c)
+        else:
+            n_out_w_c = 0
+            self.cn_layer = None
+            self.W_c = None
+
+        n_in_w_out = n_embedding_pair + n_out_w_c
+        self.W_out = nn.Sequential(*[
+            nn.Linear(n_in_w_out, n_in_w_out // 2),
+            pairformer.utils.ShiftedSoftplus(),
+            nn.Linear(n_in_w_out // 2, n_out)
+        ])
+
+        self._mapping_names = mapping_names
+        self._n_embedding_pair = n_embedding_pair
+
+        self.reset_parameters()
+
+    def reset_parameters(self) -> None:
+
+        for m in self.layers:
+            m.reset_parameters()
+
+        nn.init.xavier_uniform_(self.W_out[0].weight)
+        self.W_out[0].bias.data.fill_(0)
+        nn.init.xavier_uniform_(self.W_out[2].weight)
+        self.W_out[2].bias.data.fill_(0)
+        nn.init.xavier_uniform_(self.W_p.weight)
+        self.W_p.bias.data.fill_(0)
+        if self.W_x is not None:
+            nn.init.xavier_uniform_(self.W_x.weight)
+        if self.W_b is not None:
+            nn.init.xavier_uniform_(self.W_b.weight)
+        if self.W_c is not None:
+            nn.init.xavier_uniform_(self.W_c.weight)
+            self.W_c.bias.data.fill_(0)
+
+    def forward(
+        self, data: Dict[str, torch.Tensor], scatter_mean: bool = True
+    ) -> torch.Tensor:
+        """
+        The forward pass.
+
+        Parameters
+        ----------
+        data: Dict[str, torch.Tensor]
+            The data dict. Usually came from the `to_dict` method of a
+            `torch_geometric.data.Batch` object.
+        scatter_mean: bool
+            If perform the scatter mean to the model output.
+        """
+
+        cell = data['cell']
+        pair_masks = data['pair_masks']
+        system_masks_padded = data['system_masks_padded'].flatten()
+        node_attrs = data['node_attrs'][system_masks_padded]
+        positions = data['positions'][system_masks_padded]
+
+        n_graphs = data['ptr'].numel() - 1
+        n_atoms = len(data['pair_masks']) // n_graphs
+        n_edges = n_atoms * n_atoms
+
+        pair_masks = pair_masks.reshape(n_graphs, n_atoms, n_atoms)
+        node_attrs = node_attrs.reshape(n_graphs, n_atoms, node_attrs.shape[1])
+
+        edge_index_fc = torch_tools.ptr_to_edge_index_fc(
+            torch.arange(n_graphs + 1, device=node_attrs.device) * n_atoms,
+            n_atoms,
+        )
+        n_edges_per_graph = torch.ones(
+            n_graphs, dtype=torch.long, device=node_attrs.device
+        ) * (n_atoms * n_atoms)
+        if cell.shape[1] != 3:
+            _, pair_lengths = torch_tools.get_edge_vectors_and_lengths(
+                positions=positions,
+                edge_index=edge_index_fc,
+                shifts=torch.tensor(0.0, device=cell.device, dtype=cell.dtype),
+                eps=1E-7,
+            )
+        else:
+            cell = cell.reshape(n_graphs, 3, 3)
+            _, pair_lengths = torch_tools.get_mic_distances(
+                positions=positions,
+                edge_index=edge_index_fc,
+                cells=cell,
+                n_edges=n_edges_per_graph,
+                normalize=False,
+                eps=1E-7,
+            )
+        if self._radial_embedding is not None:
+            pair_lengths = self._radial_embedding(pair_lengths)
+            if self.W_b is not None:
+                pair_lengths = self.W_b(pair_lengths)
+            pair_lengths = pair_lengths.reshape(
+                (n_graphs, n_atoms, n_atoms, self._radial_embedding.n_out)
+            )
+        else:
+            pair_lengths = pair_lengths.reshape(
+                (n_graphs, n_atoms, n_atoms)
+            ).unsqueeze(-1)
+            pair_lengths = self.W_x(1.0 / (1.0 + pair_lengths ** 2))
+
+        # layer one: distances only
+        _, embedding_pair = self.layers[0](
+            s=None, z=pair_lengths, pair_mask=pair_masks
+        )
+
+        # inject node type information
+        embedding_node_list = []
+        for i, embedder in enumerate(self.embedders):
+            embedding_node_list.append(embedder(node_attrs[..., i]))
+        embedding_node = torch.cat(embedding_node_list, dim=-1)
+
+        src = edge_index_fc[1, :n_edges].reshape(n_atoms, n_atoms)
+        dst = edge_index_fc[0, :n_edges].reshape(n_atoms, n_atoms)
+        embedding_pair = self.W_p(torch.cat(
+            [
+                embedding_node[:, src, :],
+                embedding_pair,
+                embedding_node[:, dst, :]
+            ],
+            dim=-1,
+        ))
+
+        # other layers: distance + node type
+        for layer in self.layers[1:]:
+            _, embedding_pair = layer(
+                s=None, z=embedding_pair, pair_mask=pair_masks
+            )
+
+        n_values = pair_masks.sum(dim=(1, 2))
+        out = (embedding_pair * pair_masks.unsqueeze(-1)).sum(dim=(1, 2))
+        out = out / n_values.unsqueeze(-1)
+
+        if self.cn_layer is not None:
+            cn = self.W_c(self.cn_layer(data))
+            out = torch.hstack([out, cn])
+
+        return self.W_out(out)
+
+
+class CNModel(BaseModel):
+    """
+    A trival coordination number calculator.
+
+    Parameters
+    ----------
+    n: int
+        The n parameter of the switching function.
+    m: int
+        The m parameter of the switching function.
+    r_0: float
+        The r_0 parameter of the switching function.
+    d_0: float
+        The d_0 parameter of the switching function.
+    d_max: float
+        The d_max parameter of the switching function.
+    centers: torch.Tensor
+        Center indices.
+    """
+
+    def __init__(
+        self,
+        n: int,
+        m: int,
+        r_0: float,
+        d_0: float,
+        d_max: float,
+        centers: torch.Tensor,
+    ) -> None:
+
+        super().__init__(centers.shape[0], -1.0, 2, 0)
+
+        self.register_buffer(
+            'n', torch.tensor(n, dtype=torch.long)
+        )
+        self.register_buffer(
+            'm', torch.tensor(m, dtype=torch.long)
+        )
+        self.register_buffer(
+            'r_0', torch.tensor(r_0, dtype=torch.get_default_dtype())
+        )
+        self.register_buffer(
+            'd_0', torch.tensor(d_0, dtype=torch.get_default_dtype())
+        )
+        self.register_buffer(
+            'd_max', torch.tensor(d_max, dtype=torch.get_default_dtype())
+        )
+        self.register_buffer(
+            'centers', centers.clone().to(torch.long)
+        )
+
+    def forward(self, data: Dict[str, torch.Tensor]) -> torch.Tensor:
+        """
+        The forward pass.
+
+        Parameters
+        ----------
+        data: Dict[str, torch.Tensor]
+            The data dict. Usually came from the `to_dict` method of a
+            `torch_geometric.data.Batch` object.
+        """
+
+        cell = data['cell']
+        system_masks_padded = ~data['system_masks_padded'].flatten()
+
+        n_graphs = data['ptr'].numel() - 1
+        n_atoms_all = data['ptr'][1:] - data['ptr'][:-1]
+        n_centers = len(self.centers)
+
+        # edge index
+        # NOTE:
+        # sender layout:
+        # [0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 3, 3, 3, 3, 3, ...]
+        #  | n_centers |  | n_centers |  | n_centers |  | n_centers |
+        #  |         graph_1          |  |         graph_2          |
+        #  |                n_centers x n_atoms_e_total                  |
+        # receiver layout:
+        # [0, 1, 2, 3, 4, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 5, 6, 7, 8, 9, ...]
+        #  | n_centers |  | n_centers |  | n_centers |  | n_centers |
+        #  |                n_centers x n_atoms_e_total                  |
+        system_masks_padded_repeat = torch.repeat_interleave(
+            system_masks_padded,
+            torch.ones(
+                len(system_masks_padded), dtype=torch.long, device=cell.device
+            ) * n_centers,
+            dim=0,
+        )
+
+        sender = torch.arange(
+            len(data['positions']), dtype=torch.long, device=cell.device
+        )
+        sender = torch.repeat_interleave(
+            sender,
+            torch.ones(
+                len(sender), dtype=torch.long, device=cell.device
+            ) * n_centers,
+            dim=0,
+        )
+        sender = sender[system_masks_padded_repeat]
+
+        receiver = torch.arange(
+            n_graphs * n_centers,  dtype=torch.long, device=cell.device
+        )
+        receiver = receiver.reshape((n_graphs, n_centers))
+        receiver = torch.repeat_interleave(receiver, n_atoms_all, dim=0)
+        receiver = receiver.flatten()
+        receiver = receiver[system_masks_padded_repeat]
+        edge_index = torch.vstack([sender, receiver])
+
+        # center positions
+        positions_center = torch_tools.get_centers(
+            data['positions'], self.centers, data['ptr']
+        )
+
+        # distances
+        if cell.shape[1] != 3:
+            _, lengths = torch_tools.get_edge_vectors_and_lengths_2(
+                positions_1=data['positions'],
+                positions_2=positions_center,
+                edge_index=edge_index,
+                shifts=torch.tensor(0.0, device=cell.device, dtype=cell.dtype),
+                eps=1E-7,
+            )
+        else:
+            cell = cell.reshape(n_graphs, 3, 3)
+            n_edges_per_graph = (
+                n_atoms_all - data['n_system_padded'].flatten()
+            ) * n_centers
+            _, lengths = torch_tools.get_mic_distances_2(
+                positions_1=data['positions'],
+                positions_2=positions_center,
+                edge_index=edge_index,
+                cells=cell,
+                n_edges=n_edges_per_graph.to(torch.long),
+                normalize=False,
+                eps=1E-7,
+            )
+
+        # decay
+        distance_masks = lengths > self.d_max
+        c = (lengths - self.d_0) / (self.r_0)
+        lengths = torch.div(
+            (1 - torch.pow(c, self.n) + 1E-12),
+            (1 - torch.pow(c, self.m) + 2E-12),
+        )
+        c = (self.d_max - self.d_0) / (self.r_0)
+        lengths_max = torch.div(
+            (1 - torch.pow(c, self.n) + 1E-12),
+            (1 - torch.pow(c, self.m) + 2E-12),
+        )
+        lengths = torch.div((lengths - lengths_max), (1 - lengths_max))
+        lengths[distance_masks] = 0
+        lengths = lengths.flatten()
+
+        # sum
+        results = torch.zeros(
+            n_graphs * n_centers, dtype=cell.dtype, device=cell.device,
+        )
+        results.scatter_add_(0, receiver, lengths)
+        results = results.reshape(n_graphs, n_centers)
+
+        # NOTE: to do the AOT compilation, we use the above code, which works
+        # as the same as the following one:
+        #
+        # results = torch_tools.scatter_sum(lengths, receiver, dim=0)
+        # results = results.reshape(n_graphs, n_centers)
+
+        return results
+
+    @property
+    def device(self) -> torch.device:
+        return self.r_0.device
+
+
+def test_get_data() -> tg.data.Batch:
+    # TODO: This is not a real test, but a helper function for other tests.
+    # Maybe should change its name.
+    torch.manual_seed(0)
+    torch_tools.set_default_dtype('float64')
+
+    numbers = [8, 1, 1]
+    positions = np.array(
+        [
+            [[0.0, 0.0, 0.0], [0.07, 0.07, 0.0], [0.07, -0.07, 0.0]],
+            [[0.0, 0.0, 0.0], [-0.07, 0.07, 0.0], [0.07, 0.07, 0.0]],
+            [[0.0, 0.0, 0.0], [0.07, -0.07, 0.0], [0.07, 0.07, 0.0]],
+            [[0.0, 0.0, 0.0], [0.0, -0.07, 0.07], [0.0, 0.07, 0.07]],
+            [[0.0, 0.0, 0.0], [0.07, 0.0, 0.07], [-0.07, 0.0, 0.07]],
+            [[0.1, 0.0, 1.1], [0.17, 0.07, 1.1], [0.17, -0.07, 1.1]],
+        ],
+        dtype=np.float64
+    )
+    cell = np.identity(3, dtype=float) * 0.2
+    graph_labels = np.array([[1]])
+    node_labels = np.array([[0], [1], [1]])
+    z_table = pdata.atomic.AtomicNumberTable.from_zs(numbers)
+
+    config = [
+        pdata.atomic.Configuration(
+            atomic_numbers=numbers,
+            positions=p,
+            cell=cell,
+            pbc=[True] * 3,
+            node_labels=node_labels,
+            graph_labels=graph_labels,
+        ) for p in positions
+    ]
+    dataset = pdata.create_dataset_from_configurations(
+        config, z_table, 0.1, show_progress=False
+    )
+
+    loader = pdata.GraphDataModule(
+        dataset,
+        lengths=(1.0,),
+        batch_size=10,
+        shuffle=False,
+    )
+    loader.setup()
+
+    return next(iter(loader.train_dataloader()))
+
+
+if __name__ == '__main__':
+    pass
