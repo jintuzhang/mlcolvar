@@ -195,12 +195,14 @@ def create_timelagged_datasets(
             dataset.mapping_names,
             dataset.n_atoms_padded,
             dataset.cutoff,
+            dataset.n_atoms_padded_environment,
         )
         dataset_lag = pdata.PairDataSet(
             [copy.deepcopy(dataset[i]) for i in x_lag.numpy().tolist()],
             dataset.mapping_names,
             dataset.n_atoms_padded,
             dataset.cutoff,
+            dataset.n_atoms_padded_environment,
         )
 
     for i in range(len(x_t)):

@@ -494,6 +494,7 @@ class CNModel(BaseModel):
         """
 
         cell = data['cell']
+        environment_masks = data['environment_masks'].flatten()
         system_masks_padded = ~data['system_masks_padded'].flatten()
 
         n_graphs = data['ptr'].numel() - 1
@@ -506,15 +507,22 @@ class CNModel(BaseModel):
         # [0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 3, 3, 3, 3, 3, ...]
         #  | n_centers |  | n_centers |  | n_centers |  | n_centers |
         #  |         graph_1          |  |         graph_2          |
-        #  |                n_centers x n_atoms_e_total                  |
+        #  |         n_centers * n_atoms_padded_environment         |
         # receiver layout:
         # [0, 1, 2, 3, 4, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 5, 6, 7, 8, 9, ...]
         #  | n_centers |  | n_centers |  | n_centers |  | n_centers |
-        #  |                n_centers x n_atoms_e_total                  |
+        #  |         n_centers * n_atoms_padded_environment         |
         system_masks_padded_repeat = torch.repeat_interleave(
             system_masks_padded,
             torch.ones(
                 len(system_masks_padded), dtype=torch.long, device=cell.device
+            ) * n_centers,
+            dim=0,
+        )
+        environment_masks_repeat = torch.repeat_interleave(
+            environment_masks,
+            torch.ones(
+                len(environment_masks), dtype=torch.long, device=cell.device
             ) * n_centers,
             dim=0,
         )
@@ -532,7 +540,7 @@ class CNModel(BaseModel):
         sender = sender[system_masks_padded_repeat]
 
         receiver = torch.arange(
-            n_graphs * n_centers,  dtype=torch.long, device=cell.device
+            n_graphs * n_centers, dtype=torch.long, device=cell.device
         )
         receiver = receiver.reshape((n_graphs, n_centers))
         receiver = torch.repeat_interleave(receiver, n_atoms_all, dim=0)
@@ -570,6 +578,7 @@ class CNModel(BaseModel):
             )
 
         # decay
+        lengths = lengths.flatten()
         distance_masks = lengths > self.d_max
         c = (lengths - self.d_0) / (self.r_0)
         lengths = torch.div(
@@ -582,8 +591,10 @@ class CNModel(BaseModel):
             (1 - torch.pow(c, self.m) + 2E-12),
         )
         lengths = torch.div((lengths - lengths_max), (1 - lengths_max))
+
+        # filter padding atoms/atoms beyond d_max
+        lengths = lengths * environment_masks_repeat
         lengths[distance_masks] = 0
-        lengths = lengths.flatten()
 
         # sum
         results = torch.zeros(

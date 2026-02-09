@@ -167,6 +167,9 @@ def pairformer_committor_loss(
     # Each loss contribution is scaled by the number of samples
 
     # We need the gradient of q(x)
+    # NOTE: we don't need to consider padding atoms here, since we have enabled
+    # `allow_unused` and `materialize_grads`, and thus gradients of the padding
+    # atoms will be zero.
     grad_outputs: Optional[List[Optional[torch.Tensor]]] = [
         torch.ones_like(q, device=device)
     ]
@@ -175,7 +178,9 @@ def pairformer_committor_loss(
         [data['positions']],
         grad_outputs=grad_outputs,
         retain_graph=True,
-        create_graph=create_graph
+        create_graph=create_graph,
+        allow_unused=True,
+        materialize_grads=True,
     )[0]  # [n_nodes, 3]
     assert gradients is not None
 
@@ -291,6 +296,8 @@ def get_dataset_kolmogorov_bias(
             grad_outputs=grad_outputs,
             retain_graph=False,
             create_graph=False,
+            allow_unused=True,
+            materialize_grads=True,
         )[0]
 
         # get masses

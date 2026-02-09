@@ -40,7 +40,7 @@ __all__ = ['export', 'load_exported']
 
 
 _MODEL_INPUT_TYPE = eval(
-    'Tuple[{}]'.format(''.join(['torch.Tensor,' for _ in range(9)]))
+    'Tuple[{}]'.format(''.join(['torch.Tensor,' for _ in range(11)]))
 )
 _MODEL_OUTPUT_TYPE = eval(
     'Tuple[{}]'.format(''.join(['torch.Tensor,' for _ in range(4)]))
@@ -97,6 +97,8 @@ class ExportableCV(torch.nn.Module):
                 grad_outputs=grad_outputs,
                 retain_graph=False,
                 create_graph=False,
+                allow_unused=True,
+                materialize_grads=True,
             )[0]
             gradients = gradients.unsqueeze(0)
 
@@ -181,6 +183,8 @@ class ExportableCommittor(torch.nn.Module):
             grad_outputs=grad_outputs,
             retain_graph=True,
             create_graph=True,
+            allow_unused=True,
+            materialize_grads=True,
         )[0]
 
         gradients_z_2 = torch.pow(gradients_z, 2)
@@ -214,6 +218,7 @@ class ExportableCommittor(torch.nn.Module):
             grad_outputs=grad_outputs,
             retain_graph=False,
             create_graph=False,
+            allow_unused=True,
         )[0]
 
         gradients_z = gradients_z.unsqueeze(0)
@@ -330,6 +335,8 @@ def _dict_to_tensors(inputs: Dict[str, torch.Tensor]) -> Tuple[torch.Tensor]:
         inputs['pair_masks'],
         inputs['n_system_padded'],
         inputs['system_masks_padded'],
+        inputs['n_environment_padded'],
+        inputs['environment_masks'],
     )
 
     return outputs
@@ -347,6 +354,8 @@ def _tensors_to_dict(inputs: Tuple[torch.Tensor]) -> Dict[str, torch.Tensor]:
         'pair_masks': inputs[6],
         'n_system_padded': inputs[7],
         'system_masks_padded': inputs[8],
+        'n_environment_padded': inputs[9],
+        'environment_masks': inputs[10],
     }
 
     return outputs

@@ -29,6 +29,7 @@ def create_dataset_from_trajectories(
     environment_selection: str = None,
     center_selections: List[str] = [],
     n_atoms_padded: int = 0,
+    n_atoms_padded_environment: int = 0,
     return_trajectories: bool = False,
     no_pbc: bool = False,
     show_progress: bool = True,
@@ -72,7 +73,9 @@ def create_dataset_from_trajectories(
     center_selections: List[str]
         MDTraj style atom selections [1] of the pocket atoms.
     n_atoms_padded: int
-        Number of nodes after padding. This is only used by Pairformer.
+        Number of nodes after padding.
+    n_atoms_padded_environment: int
+        Number of environment nodes after padding.
     return_trajectories: bool
         If also return the loaded trajectory objects.
     no_pbc: bool
@@ -116,6 +119,15 @@ def create_dataset_from_trajectories(
             and all([type(c) is str for c in center_selections])
         ), (
             'the `center_selections` argument should be a list of strings!'
+        )
+        assert cutoff > 0, (
+            'the `environment_selection` argument requires a positive '
+            + '`cutoff` value!'
+        )
+        assert n_atoms_padded_environment > 0, (
+            'the `environment_selection` argument requires a positive '
+            + '`n_atoms_padded_environment` value! You may use the '
+            + '`DUMPATOMS` functionality of PLUMED to estimate this value.'
         )
         selection = '({:s}) or ({:s})'.format(
             system_selection, environment_selection
@@ -264,6 +276,7 @@ def create_dataset_from_trajectories(
                         mapping_tables,
                         cutoff,
                         n_atoms_padded,
+                        n_atoms_padded_environment,
                         show_progress,
                     )
                     for i in indices
@@ -291,6 +304,7 @@ def create_dataset_from_trajectories(
             mapping_tables,
             cutoff,
             n_atoms_padded,
+            n_atoms_padded_environment,
             show_progress,
         )
 
@@ -577,6 +591,7 @@ def test_create_dataset_from_trajectories(
             system_selection='type O and {:s}'.format(system_selection),
             environment_selection='type H and {:s}'.format(system_selection),
             center_selections=['index 0'],
+            n_atoms_padded_environment=2,
             show_progress=False,
         )
 
@@ -592,6 +607,7 @@ def test_create_dataset_from_trajectories(
             system_selection='name H2 and {:s}'.format(system_selection),
             environment_selection='name H1 and {:s}'.format(system_selection),
             center_selections=['name H2 and {:s}'.format(system_selection)],
+            n_atoms_padded_environment=1,
             show_progress=False,
         )
 

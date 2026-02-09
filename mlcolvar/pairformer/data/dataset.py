@@ -42,6 +42,8 @@ class PairDataSet(list):
         Number of atoms after padding.
     cutoff: float
         The cutoff radius for truncating the system.
+    n_atoms_padded_environment: int
+        Number of environment nodes after padding.
     """
 
     def __init__(
@@ -50,12 +52,14 @@ class PairDataSet(list):
         mapping_names: Dict[str, List[str]],
         n_atoms_padded: int,
         cutoff: float = -1.0,
+        n_atoms_padded_environment: int = 0,
     ) -> None:
         super().__init__()
         self.extend(data)
         self.__mapping_names = mapping_names
         self.__n_atoms_padded = n_atoms_padded
         self.__cutoff = cutoff
+        self.__n_atoms_padded_environment = n_atoms_padded_environment
 
     def __getitem__(
         self,
@@ -73,7 +77,13 @@ class PairDataSet(list):
             if isinstance(index, slice):
                 index = list(range(len(self)))[index]
             data = [super(PairDataSet, self).__getitem__(i) for i in index]
-            return PairDataSet(data, self.mapping_names, self.cutoff)
+            return PairDataSet(
+                data,
+                self.mapping_names,
+                self.n_atoms_padded,
+                self.cutoff,
+                self.n_atoms_padded_environment,
+            )
         elif np.issubdtype(type(index), np.integer):
             return super(PairDataSet, self).__getitem__(index)
         else:
@@ -111,9 +121,16 @@ class PairDataSet(list):
     @property
     def n_atoms_padded(self) -> int:
         """
-        Number of system atoms after padding.
+        Number of system nodes after padding.
         """
         return self.__n_atoms_padded
+
+    @property
+    def n_atoms_padded_environment(self) -> int:
+        """
+        Number of environment nodes after padding.
+        """
+        return self.__n_atoms_padded_environment
 
 
 def _create_dataset_from_configuration(
@@ -121,6 +138,7 @@ def _create_dataset_from_configuration(
     mapping_tables: Dict[str, atomic.GenericMappingTable],
     n_atoms_padded: int,
     cutoff: float = -1.0,
+    n_atoms_padded_environment: int = 0,
 ) -> tg.data.Data:
     """
     Build the Pairformer data object from a configuration.
@@ -135,6 +153,8 @@ def _create_dataset_from_configuration(
         The node embedding mapping tables.
     cutoff: float
         The cutoff radius for truncating the system.
+    n_atoms_padded: int
+        Number of environment nodes after padding.
     """
 
     assert config.graph_labels is None or len(config.graph_labels.shape) == 2
@@ -145,9 +165,9 @@ def _create_dataset_from_configuration(
     #   |     n_system     |                          |
     #   |               n_atoms_padded                |
     # with neighbots:
-    #  [[x_s, y_s, x_s] ..., [0, 0, 0], ... [x_e, y_e, x_e],]
-    #   |  n_system   |              |                    |
-    #   |       n_atoms_padded       |     n_neighbors    |
+    #  [[x_s, y_s, x_s] ..., [0, 0, 0], ... [x_e, y_e, x_e], ..., [0, 0, 0]]
+    #   |  n_system   |              |      | n_neighbors |               |
+    #   |       n_atoms_padded       |      | n_atoms_padded_environment  |
     # thus, the first `n_atoms_padded` elements of this tensor could be safely
     # used in Pairformer calculations.
 
@@ -158,6 +178,10 @@ def _create_dataset_from_configuration(
         )
         assert config.centers is not None, (
             'The `cutoff` option argument requires centers to be given!'
+        )
+        assert n_atoms_padded_environment > 0, (
+            'The `cutoff` option argument requires the'
+            + '`n_atoms_padded_environment` option to be given!'
         )
         for i, c in enumerate(config.centers):
             assert (set(c) == set(c).intersection(set(config.system))), (
@@ -186,6 +210,10 @@ def _create_dataset_from_configuration(
             pbc=config.pbc,
             cell=config.cell,
         )
+        assert len(neighbors) <= n_atoms_padded_environment, (
+            f'Number of environment nodes {len(neighbors)} is '
+            + f'larger than the padding size {n_atoms_padded_environment}'
+        )
 
         positions_system = torch.tensor(
             config.positions[config.system], dtype=torch.get_default_dtype()
@@ -203,6 +231,7 @@ def _create_dataset_from_configuration(
         positions_system = torch.tensor(
             config.positions, dtype=torch.get_default_dtype()
         )
+        n_atoms_padded_environment = 0
         neighbors = np.array([])
         centers = None
 
@@ -212,11 +241,14 @@ def _create_dataset_from_configuration(
         )
     )
     positions = torch.zeros(
-        (n_atoms_padded + len(neighbors), 3), dtype=torch.get_default_dtype()
+        (n_atoms_padded + n_atoms_padded_environment, 3),
+        dtype=torch.get_default_dtype()
     )
     positions[:len(positions_system), :] = positions_system
     if len(neighbors) > 0:
-        positions[-len(neighbors):, :] = torch.tensor(
+        positions[
+            n_atoms_padded:(n_atoms_padded + len(neighbors)), :
+        ] = torch.tensor(
             config.positions[neighbors], dtype=torch.get_default_dtype()
         )
 
@@ -258,7 +290,10 @@ def _create_dataset_from_configuration(
         )
 
     node_attrs = torch.zeros(
-        (n_atoms_padded + len(neighbors), len(mapping_tables.keys())),
+        (
+            n_atoms_padded + n_atoms_padded_environment,
+            len(mapping_tables.keys())
+        ),
         dtype=torch.long,
     )
     node_attrs[:len(node_attrs_list[0]), :] = torch.hstack(node_attrs_list)
@@ -275,33 +310,60 @@ def _create_dataset_from_configuration(
         else 1
     )
 
+    pair_masks = torch.zeros(
+        (n_atoms_padded, n_atoms_padded), dtype=torch.long
+    )
+    pair_masks[:len(positions_system), :len(positions_system)] = 1
+
     n_system = torch.tensor(
         [[positions_system.shape[0]]], dtype=torch.get_default_dtype()
     )
     n_system_padded = torch.tensor(
         [[n_atoms_padded]], dtype=torch.get_default_dtype()
     )
-
-    pair_masks = torch.zeros(
-        (n_atoms_padded, n_atoms_padded), dtype=torch.long
-    )
-    pair_masks[:len(positions_system), :len(positions_system)] = 1
-
+    # NOTE:
+    # the '_padded' suffix means that this tensor masks the padded system atoms
     system_masks_padded = torch.zeros((len(positions), 1), dtype=torch.bool)
     system_masks_padded[:n_atoms_padded, 0] = 1
 
+    n_environment = torch.tensor(
+        [[len(neighbors)]], dtype=torch.get_default_dtype()
+    )
+    n_environment_padded = torch.tensor(
+        [[n_atoms_padded_environment]], dtype=torch.get_default_dtype()
+    )
+    environment_masks = torch.zeros(
+        (n_atoms_padded_environment, 1), dtype=torch.bool
+    )
+    environment_masks[:len(neighbors), 0] = 1
+
     return tg.data.Data(
-        positions=positions,               # [n_atoms_padded + n_neighbors, 3]
-        cell=cell,                         # [3, 3]
-        node_attrs=node_attrs,             # [n_atoms_padded + n_neighbors, 3]
-        graph_labels=graph_labels,         # [1, 1]
-        n_system=n_system,                 # [1, 1]
-        n_system_padded=n_system_padded,   # [1, 1]
-        weight=weight,                     # [1]
-        pair_masks=pair_masks,             # [n_atoms_padded, n_atoms_padded]
-        centers=centers,                   # [n_centers, n_atoms_in_center_max]
+        # [n_atoms_padded + n_atoms_padded_environment, 3]
+        positions=positions,
+        # [3, 3]
+        cell=cell,
+        # [n_atoms_padded + n_atoms_padded_environment, 3]
+        node_attrs=node_attrs,
+        # [1, 1]
+        graph_labels=graph_labels,
+        # [1]
+        weight=weight,
+        # [n_atoms_padded, n_atoms_padded]
+        pair_masks=pair_masks,
+        # [n_centers, n_atoms_in_center_max]
+        centers=centers,
+        # [1, 1]
+        n_system=n_system,
+        # [1, 1]
+        n_system_padded=n_system_padded,
+        # [n_atoms_padded + n_atoms_padded_environment, 1]
         system_masks_padded=system_masks_padded,
-                                           # [n_atoms_padded + n_neighbors, 1]
+        # [1, 1]
+        n_environment=n_environment,
+        # [1, 1]
+        n_environment_padded=n_environment_padded,
+        # [n_atoms_padded_environment, 1]
+        environment_masks=environment_masks,
     )
 
 
@@ -310,6 +372,7 @@ def create_dataset_from_configurations(
     mapping_tables: Dict[str, atomic.GenericMappingTable],
     cutoff: float = -1.0,
     n_atoms_padded: int = 0,
+    n_atoms_padded_environment: int = 0,
     show_progress: bool = True
 ) -> PairDataSet:
     """
@@ -324,7 +387,9 @@ def create_dataset_from_configurations(
     cutoff: float
         The cutoff radius for truncating the system.
     n_atoms_padded: int
-        Number of nodes after padding. This is only used by Pairformer.
+        Number of system nodes after padding.
+    n_atoms_padded: int
+        Number of environment nodes after padding.
     show_progress: bool
         If show the progress bar.
     """
@@ -335,14 +400,24 @@ def create_dataset_from_configurations(
 
     data_list = [
         _create_dataset_from_configuration(
-            c, mapping_tables, n_atoms_padded, cutoff
+            c,
+            mapping_tables,
+            n_atoms_padded,
+            cutoff,
+            n_atoms_padded_environment,
         ) for c in items
     ]
 
     mapping_names = {
         k: mapping_tables[k].name_list for k in mapping_tables.keys()
     }
-    dataset = PairDataSet(data_list, mapping_names, n_atoms_padded, cutoff)
+    dataset = PairDataSet(
+        data_list,
+        mapping_names,
+        n_atoms_padded,
+        cutoff,
+        n_atoms_padded_environment,
+    )
 
     return dataset
 
@@ -364,6 +439,10 @@ def cat_dataset(datasets: List[PairDataSet]) -> PairDataSet:
     same_n_atoms_paddeds = all(
         d.n_atoms_padded == d0.n_atoms_padded for d in datasets
     )
+    same_n_atoms_padded_environment = all(
+        d.n_atoms_padded_environment == d0.n_atoms_padded_environment
+        for d in datasets
+    )
 
     assert same_cutoffs, (
         'Cutoff radii are different in different datasets!'
@@ -374,12 +453,16 @@ def cat_dataset(datasets: List[PairDataSet]) -> PairDataSet:
     assert same_n_atoms_paddeds, (
         'Padding sizes are different in different datasets!'
     )
+    assert same_n_atoms_padded_environment, (
+        'Environment padding sizes are different in different datasets!'
+    )
 
     return PairDataSet(
         [dd for d in datasets for dd in d],
         mapping_names=d0.mapping_names,
         n_atoms_padded=d0.n_atoms_padded,
         cutoff=d0.cutoff,
+        n_atoms_padded_environment=d0.n_atoms_padded_environment,
     )
 
 
@@ -520,9 +603,9 @@ def test_from_configurations() -> None:
         node_attrs={
             'atom_names': atom_names, 'residue_names': residue_names[i]
         },
-        system=[0],
-        environment=[1, 2],
-        centers=[[0]],
+        system=np.array([0]),
+        environment=np.array([1, 2]),
+        centers=np.array([[0]]),
     ) for i in range(0, 10)]
     dataset = create_dataset_from_configurations(
         config,
@@ -537,6 +620,7 @@ def test_from_configurations() -> None:
         cutoff=0.1,
         n_atoms_padded=3,
         show_progress=False,
+        n_atoms_padded_environment=3,
     )
     for i in range(10):
         assert (
@@ -546,7 +630,19 @@ def test_from_configurations() -> None:
                 [0.0, 0.0, 0.0],
                 [0.07, 0.07, 0.0],
                 [0.07, -0.07, 0.0],
+                [0.0, 0.0, 0.0],
             ])
+        ).all()
+        assert (
+            dataset[i]['n_environment'] == torch.tensor([[2]])
+        ).all()
+        assert (
+            dataset[i]['n_environment_padded'] == torch.tensor([[3]])
+        ).all()
+        assert (
+            dataset[i]['environment_masks'] == torch.tensor(
+                [[True], [True], [False]]
+            )
         ).all()
 
     config = [atomic.Configuration(
@@ -558,9 +654,9 @@ def test_from_configurations() -> None:
         node_attrs={
             'atom_names': atom_names, 'residue_names': residue_names[i]
         },
-        system=[1],
-        environment=[2],
-        centers=[[1]],
+        system=np.array([1]),
+        environment=np.array([2]),
+        centers=np.array([[1]]),
     ) for i in range(0, 10)]
     dataset = create_dataset_from_configurations(
         config,
@@ -575,6 +671,7 @@ def test_from_configurations() -> None:
         cutoff=0.1,
         n_atoms_padded=3,
         show_progress=False,
+        n_atoms_padded_environment=2,
     )
     for i in range(10):
         assert (
@@ -583,6 +680,7 @@ def test_from_configurations() -> None:
                 [0.0, 0.0, 0.0],
                 [0.0, 0.0, 0.0],
                 [0.07, -0.07, 0.0],
+                [0.0, 0.0, 0.0],
             ])
         ).all()
         assert (
@@ -591,6 +689,17 @@ def test_from_configurations() -> None:
                 [0.0, 0.2, 0.0],
                 [0.0, 0.0, 0.2],
             ])
+        ).all()
+        assert (
+            dataset[i]['n_environment'] == torch.tensor([[1]])
+        ).all()
+        assert (
+            dataset[i]['n_environment_padded'] == torch.tensor([[2]])
+        ).all()
+        assert (
+            dataset[i]['environment_masks'] == torch.tensor(
+                [[True], [False]]
+            )
         ).all()
 
 
@@ -614,9 +723,9 @@ def test_cat_dataset() -> None:
         node_attrs={
             'atom_names': atom_names, 'residue_names': residue_names[i]
         },
-        system=[0],
-        environment=[1, 2],
-        centers=[[0]],
+        system=np.array([0]),
+        environment=np.array([1, 2]),
+        centers=np.array([[0]]),
     ) for i in range(6)]
     dataset = create_dataset_from_configurations(
         config,
@@ -645,9 +754,9 @@ def test_cat_dataset() -> None:
         node_attrs={
             'atom_names': atom_names, 'residue_names': residue_names[i]
         },
-        system=[0],
-        environment=[1, 2],
-        centers=[[0]],
+        system=np.array([0]),
+        environment=np.array([1, 2]),
+        centers=np.array([[0]]),
     ) for i in range(6)]
     dataset_1 = create_dataset_from_configurations(
         config,
@@ -661,6 +770,7 @@ def test_cat_dataset() -> None:
         },
         n_atoms_padded=3,
         show_progress=False,
+        n_atoms_padded_environment=2,
     )
 
     dataset = cat_dataset([dataset, dataset_1, dataset])
@@ -683,6 +793,7 @@ def test_cat_dataset() -> None:
         cutoff=0.2,
         n_atoms_padded=3,
         show_progress=False,
+        n_atoms_padded_environment=2,
     )
     try:
         dataset = cat_dataset([dataset, dataset_1])
