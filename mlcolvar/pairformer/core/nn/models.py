@@ -384,7 +384,7 @@ class PairFormerModel(BaseModel):
             if self.W_b is not None:
                 pair_lengths = self.W_b(pair_lengths)
             pair_lengths = pair_lengths.reshape(
-                (n_graphs, n_atoms, n_atoms, self._radial_embedding.n_out)
+                (n_graphs, n_atoms, n_atoms, self._n_embedding_pair)
             )
         else:
             pair_lengths = pair_lengths.reshape(
