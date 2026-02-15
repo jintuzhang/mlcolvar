@@ -288,7 +288,7 @@ class PairFormerModel(BaseModel):
         ])
 
         if cn_options is not None:
-            n_out_w_c = len(cn_options['centers']) * 2
+            n_out_w_c = cn_options.pop('n_centers') * 2
             self.cn_layer = CNModel(**cn_options)
             self.W_c = torch.nn.Linear(n_out_w_c // 2, n_out_w_c)
         else:
@@ -305,6 +305,7 @@ class PairFormerModel(BaseModel):
 
         self._mapping_names = mapping_names
         self._n_embedding_pair = n_embedding_pair
+        self._n_centers = n_out_w_c // 2
 
         self.reset_parameters()
 
@@ -431,7 +432,7 @@ class PairFormerModel(BaseModel):
         return self.W_out(out)
 
 
-class CNModel(BaseModel):
+class CNModel(nn.Module):
     """
     A trival coordination number calculator.
 
@@ -447,8 +448,6 @@ class CNModel(BaseModel):
         The d_0 parameter of the switching function.
     d_max: float
         The d_max parameter of the switching function.
-    centers: torch.Tensor
-        Center indices.
     """
 
     def __init__(
@@ -458,10 +457,9 @@ class CNModel(BaseModel):
         r_0: float,
         d_0: float,
         d_max: float,
-        centers: torch.Tensor,
     ) -> None:
 
-        super().__init__(centers.shape[0], -1.0, 2, 0)
+        super().__init__()
 
         self.register_buffer(
             'n', torch.tensor(n, dtype=torch.long)
@@ -477,9 +475,6 @@ class CNModel(BaseModel):
         )
         self.register_buffer(
             'd_max', torch.tensor(d_max, dtype=torch.get_default_dtype())
-        )
-        self.register_buffer(
-            'centers', centers.clone().to(torch.long)
         )
 
     def forward(self, data: Dict[str, torch.Tensor]) -> torch.Tensor:
@@ -499,7 +494,7 @@ class CNModel(BaseModel):
 
         n_graphs = data['ptr'].numel() - 1
         n_atoms_all = data['ptr'][1:] - data['ptr'][:-1]
-        n_centers = len(self.centers)
+        n_centers = data['centers'].shape[1]
 
         # edge index
         # NOTE:
@@ -550,7 +545,7 @@ class CNModel(BaseModel):
 
         # center positions
         positions_center = torch_tools.get_centers(
-            data['positions'], self.centers, data['ptr']
+            data['positions'], data['centers']
         )
 
         # distances

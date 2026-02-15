@@ -80,7 +80,7 @@ def get_edge_vectors_and_lengths_2(
 
 
 def get_centers(
-    positions: torch.Tensor, indices: torch.Tensor, ptr: torch.Tensor,
+    positions: torch.Tensor, indices: torch.Tensor
 ) -> torch.Tensor:
     """
     Get centers of a group of atoms in each batch.
@@ -89,41 +89,33 @@ def get_centers(
     ----------
     position: torch.Tensor (shape: [n_atoms, 3])
         The position vector.
-    indices: torch.Tensor (shape: [n_groups, n_atoms_in_group_padded])
+    indices: torch.Tensor (shape: [n_graphs, n_groups, n_atoms_in_group])
         Indices of the atoms of the group. Each group should be padded to the
         same size using negative numbers.
-    ptr: torch.Tensor (shape: [n_graphs + 1])
-        The pointer vector.
 
     Notes
     -----
     This function does not consider the PBC, which means, atoms inside the
     group should not be splitted by the simulation box.
     """
-    device = ptr.device
-    n_graphs = len(ptr) - 1
-    indices_all = indices.to(device).flatten()
-    indices_all = indices_all[indices_all >= 0]
+    device = positions.device
+    n_graphs = indices.shape[0]
+    indices = indices.clone()
+    indices_all = indices.to(device).flatten(1)
+    mask = indices >= 0
+    mask_all = indices_all >= 0
+    indices_all[~mask_all] = 0
 
-    starts = ptr[:-1].unsqueeze(1)
-    indices_all = (starts + indices_all).reshape(-1)
-    positions_group = positions[indices_all]
-
-    r = (indices >= 0).sum(dim=1).repeat(n_graphs)
-    scatter_indices = torch.arange(n_graphs * len(indices), device=device)
-    scatter_indices = torch.repeat_interleave(scatter_indices, r, dim=0)
-
-    centers = torch.zeros(
-        (n_graphs * len(indices), 3), dtype=positions.dtype, device=device
+    indices_all = indices_all.unsqueeze(-1).expand(-1, -1, 3)
+    positions = positions.reshape((n_graphs, len(positions) // n_graphs, 3))
+    positions_group = torch.gather(positions, dim=1, index=indices_all)
+    positions_group = positions_group * mask_all.unsqueeze(-1)
+    positions_group = positions_group.reshape(
+        n_graphs, indices.shape[1], indices.shape[2], 3
     )
-    centers.index_add_(0, scatter_indices, positions_group)
-    centers = centers / r.unsqueeze(-1)
 
-    # NOTE: to do the AOT compilation, we use the above code, which works
-    # as the same as the following one:
-    #
-    # centers = scatter_mean(positions_group, scatter_indices, dim=0)
-    # centers = centers.reshape((n_graphs * len(indices), 3))
+    centers = positions_group.sum(dim=2) / mask.sum(dim=2).unsqueeze(-1)
+    centers = centers.reshape(n_graphs * indices.shape[1], 3)
 
     return centers
 
@@ -182,7 +174,6 @@ def get_mic_distances(
     return vectors, lengths
 
 
-@torch.jit.script
 def get_mic_distances_2(
     positions_1: torch.Tensor,
     positions_2: torch.Tensor,
@@ -472,12 +463,15 @@ def test_get_centers() -> None:
         [11.856, 8.952,  11.329],
     ])
     indices = torch.tensor(
-        [[0, 1, -1, -1, -1], [2, 3, -1, -1, -1], [0, 2, 3, -1, -1]]
+        [[[0, 1, -1, -1, -1], [2, 3, -1, -1, -1], [0, 2, 3, -1, -1]],
+         [[0, 1, -1, -1, -1], [2, 3, -1, -1, -1], [0, 2, 3, -1, -1]],
+         [[0, 1, -1, -1, -1], [2, 3, -1, -1, -1], [0, 2, 3, -1, -1]],
+         [[0, 1, -1, -1, -1], [2, 3, -1, -1, -1], [0, 2, 3, -1, -1]],
+         [[0, 1, -1, -1, -1], [2, 3, -1, -1, -1], [0, 2, 3, -1, -1]]],
     )
-    ptr = torch.tensor([0, 4, 8, 12, 16, 20])
 
     assert (
-        get_centers(positions, indices, ptr) - torch.tensor([
+        get_centers(positions, indices) - torch.tensor([
             [9.5190000000000, 12.4710000000000, 11.2360000000000,],
             [16.5020000000000, 7.2725000000000, 6.8285000000000,],
             [13.1860000000000, 8.6986666666667, 9.3196666666667,],

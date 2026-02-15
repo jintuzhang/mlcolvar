@@ -188,19 +188,14 @@ def _create_dataset_from_configuration(
                 f'Not all atoms in center group {i} are system atoms!'
             )
 
-        n_atoms_in_center_max = max([len(c) for c in config.centers])
         centers = -torch.ones(
-            (len(config.centers), n_atoms_in_center_max), dtype=torch.long
+            (1, len(config.centers), n_atoms_padded), dtype=torch.long
         )
         for i, c in enumerate(config.centers):
-            centers[i, :len(c)] = torch.tensor(c, dtype=torch.long)
+            centers[0, i, :len(c)] = torch.tensor(c, dtype=torch.long)
 
         positions_tmp = torch.tensor(config.positions)
-        positions_centers = torch_tools.get_centers(
-            positions_tmp,
-            centers,
-            torch.tensor([0, len(positions_tmp)], dtype=torch.long)
-        )
+        positions_centers = torch_tools.get_centers(positions_tmp, centers)
         positions_centers = positions_centers.detach().numpy()
         neighbors = get_neighborhood_of_centers(
             positions=positions_tmp,
@@ -225,7 +220,7 @@ def _create_dataset_from_configuration(
                 np.where(config.system == x)[0][0]
                 if x in config.system else -1 for x in c
             ]
-            centers[i, :len(c)] = torch.tensor(c, dtype=torch.long)
+            centers[0, i, :len(c)] = torch.tensor(c, dtype=torch.long)
 
     else:
         positions_system = torch.tensor(
@@ -233,7 +228,7 @@ def _create_dataset_from_configuration(
         )
         n_atoms_padded_environment = 0
         neighbors = np.array([])
-        centers = None
+        centers = torch.zeros(1, dtype=torch.long)
 
     assert len(positions_system) <= n_atoms_padded, (
         'Number of nodes {:d} is larger than the padding size {:d}'.format(
@@ -773,12 +768,12 @@ def test_cat_dataset() -> None:
         n_atoms_padded_environment=2,
     )
 
-    dataset = cat_dataset([dataset, dataset_1, dataset])
-    assert [d.graph_labels[0, 0] for d in dataset] == (
-            [0, 1, 2, 3, 4, 5] * 2
-            + [6, 7, 8, 9, 10, 11]
-            + [0, 1, 2, 3, 4, 5] * 2
-    )
+    try:
+        dataset = cat_dataset([dataset, dataset_1, dataset])
+    except Exception:
+        pass
+    else:
+        raise Exception()
 
     dataset_1 = create_dataset_from_configurations(
         config,

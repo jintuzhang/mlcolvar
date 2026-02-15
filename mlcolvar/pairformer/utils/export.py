@@ -40,7 +40,7 @@ __all__ = ['export', 'load_exported']
 
 
 _MODEL_INPUT_TYPE = eval(
-    'Tuple[{}]'.format(''.join(['torch.Tensor,' for _ in range(11)]))
+    'Tuple[{}]'.format(''.join(['torch.Tensor,' for _ in range(12)]))
 )
 _MODEL_OUTPUT_TYPE = eval(
     'Tuple[{}]'.format(''.join(['torch.Tensor,' for _ in range(4)]))
@@ -337,6 +337,7 @@ def _dict_to_tensors(inputs: Dict[str, torch.Tensor]) -> Tuple[torch.Tensor]:
         inputs['system_masks_padded'],
         inputs['n_environment_padded'],
         inputs['environment_masks'],
+        inputs['centers'],
     )
 
     return outputs
@@ -356,6 +357,7 @@ def _tensors_to_dict(inputs: Tuple[torch.Tensor]) -> Dict[str, torch.Tensor]:
         'system_masks_padded': inputs[8],
         'n_environment_padded': inputs[9],
         'environment_masks': inputs[10],
+        'centers': inputs[11],
     }
 
     return outputs
@@ -391,10 +393,11 @@ def _get_model_summary(
 
 def _get_model_metadata(
     model: LightningModule,
+    n_atoms_padded: int,
+    n_atoms_padded_environment: int,
     calculate_gradients: bool,
     k_bias_options: Optional[Dict[str, Any]] = None,
     model_summary_level: int = 3,
-    n_atoms_padded: int = 0,
 ) -> Dict[str, str]:
 
     is_committor = hasattr(model, 'is_committor') and model.is_committor == 1
@@ -446,6 +449,23 @@ def _get_model_metadata(
         metadata.update(metadata_c)
     else:
         metadata['is_committor'] = str(False)
+
+    if model._model.cn_layer is not None:
+        assert n_atoms_padded_environment > 0, (
+            'the CN model requires a positive `n_atoms_padded_environment` '
+            + 'value! You may use the `DUMPATOMS` functionality of PLUMED to '
+            + 'estimate this value.'
+        )
+
+        metadata['d_max'] = str(model._model.cn_layer.d_max.item())
+        metadata['n_centers'] = str(model._model._n_centers)
+        metadata['n_atoms_padded_environment'] = str(
+            n_atoms_padded_environment
+        )
+    else:
+        metadata['d_max'] = str(0.0)
+        metadata['n_centers'] = str(0)
+        metadata['n_atoms_padded_environment'] = str(0)
 
     metadata['calculate_gradients'] = str(calculate_gradients)
 
@@ -564,6 +584,7 @@ def export(
     calculate_gradients: bool = True,
     k_bias_options: Optional[Dict[str, Any]] = None,
     n_atoms_padded: int = 0,
+    n_atoms_padded_environment: int = 0,
     model_summary_level: int = 3,
 ) -> str:
     """
@@ -596,7 +617,9 @@ def export(
         - 'kb_weighted': False,
             If calculate the mass-weighted (exact) Kolmogorov bias.
     n_atoms_padded: int
-        Number of nodes after padding. This is only used by Pairformer.
+        Number of nodes after padding.
+    n_atoms_padded_environment: int
+        Number of environment nodes after padding.
 
     Notes
     -----
@@ -715,10 +738,11 @@ def export(
 
     metadata = _get_model_metadata(
         model,
+        n_atoms_padded,
+        n_atoms_padded_environment,
         calculate_gradients,
         k_bias_options,
         model_summary_level,
-        n_atoms_padded,
     )
     _update_package_metadata(file_name, metadata)
     _check_exported_model_outputs(file_name, exportable, inputs)
