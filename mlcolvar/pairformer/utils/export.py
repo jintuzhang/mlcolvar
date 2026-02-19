@@ -807,27 +807,17 @@ def load_exported(
     return model
 
 
-def test_export_schnet() -> None:
+def test_export_1() -> None:
 
     torch.manual_seed(0)
     torch_tools.set_default_dtype('float64')
 
-    model = __import__('mlcolvar').graph.core.nn.models.SchNetModel(
-        n_out=2,
-        cutoff=0.1,
-        atomic_numbers=[1, 8],
-        n_bases=6,
-        n_layers=2,
-        n_filters=16,
-        n_hidden_channels=16,
-    )
-    model.n_cvs = model.n_out
-    model.training_time = torch.zeros(7, dtype=int)
-    model.dtype = torch.float64
-    model.device = 'cpu'
-    model._get_time = lambda: [0] * 7
+    import mlcolvar.pairformer as mpair
 
-    batch = __import__('mlcolvar').graph.core.nn.models.test_get_data()
+    batch, mapping_names = mpair.core.nn.models.test_get_data()
+
+    model = mpair.cvs.PairBaseCV(2, mapping_names)
+
     dataset = batch.to_data_list()[0]
     loader = tg.loader.DataLoader(
         [dataset], batch_size=1, shuffle=False,
@@ -845,7 +835,7 @@ def test_export_schnet() -> None:
     assert (
         torch.abs(
             model_c(_dict_to_tensors(data_dict))[0]
-            - torch.tensor([[0.40384621527953063, -0.1257513365138969]])
+            - torch.tensor([[0.771122634223133, -0.2714238083585388]])
         ) < 1E-12
     ).all()
 
@@ -855,6 +845,7 @@ def test_export_schnet() -> None:
         model,
         example_inputs=batch.to_data_list()[0],
         file_name='model.pt2',
+        n_atoms_padded=10,
     )
     model_c = load_exported('model.pt2')
 
@@ -880,6 +871,12 @@ def test_export_schnet() -> None:
 
     assert (
         torch.abs(
+            model_c(_dict_to_tensors(data_dict))[0]
+            - torch.tensor([[0.771122634223133, -0.2714238083585388]])
+        ) < 1E-12
+    ).all()
+    assert (
+        torch.abs(
             model_c(_dict_to_tensors(data_dict))[1][0] - gradients_1
         ) < 1E-12
     ).all()
@@ -892,28 +889,31 @@ def test_export_schnet() -> None:
     os.remove('model.pt2')
 
 
-def test_export_painn() -> None:
+def test_export_2() -> None:
 
     torch.manual_seed(0)
     torch_tools.set_default_dtype('float64')
+    os.environ['MLCOLVAR_EXPORT_FLOAT_TOL'] = '1E-10'
 
-    model = __import__('mlcolvar').graph.core.nn.models.PaiNNModel(
-        n_out=2,
-        cutoff=0.1,
-        atomic_numbers=[1, 8],
-        n_bases=6,
-        n_layers=2,
-        n_hidden_channels=12,
-        w_out_after_sum=True,
-        basis_type='gaussian',
+    import mlcolvar.pairformer as mpair
+
+    batch, mapping_names = mpair.core.nn.models.test_get_data(True)
+
+    model = mpair.cvs.PairBaseCV(
+        2,
+        mapping_names,
+        model_options={
+            'cn_options': {
+                'n': 6,
+                'm': 12,
+                'r_0': 0.09,
+                'd_0': 0,
+                'd_max': 0.1,
+                'n_centers': 1,
+            },
+        }
     )
-    model.n_cvs = model.n_out
-    model.training_time = torch.zeros(7, dtype=int)
-    model.dtype = torch.float64
-    model.device = 'cpu'
-    model._get_time = lambda: [0] * 7
 
-    batch = __import__('mlcolvar').graph.core.nn.models.test_get_data()
     dataset = batch.to_data_list()[0]
     loader = tg.loader.DataLoader(
         [dataset], batch_size=1, shuffle=False,
@@ -923,24 +923,9 @@ def test_export_painn() -> None:
     export(
         model,
         example_inputs=batch.to_data_list()[0],
-        file_name='model.no_grad.pt2',
-        calculate_gradients=False,
-    )
-    model_c = load_exported('model.no_grad.pt2')
-
-    assert (
-        torch.abs(
-            model_c(_dict_to_tensors(data_dict))[0]
-            - torch.tensor([[0.012601337298479546, -0.0032668391572678087]])
-        ) < 1E-12
-    ).all()
-
-    os.remove('model.no_grad.pt2')
-
-    export(
-        model,
-        example_inputs=batch.to_data_list()[0],
         file_name='model.pt2',
+        n_atoms_padded=3,
+        n_atoms_padded_environment=3,
     )
     model_c = load_exported('model.pt2')
 
@@ -966,6 +951,12 @@ def test_export_painn() -> None:
 
     assert (
         torch.abs(
+            model_c(_dict_to_tensors(data_dict))[0]
+            - torch.tensor([[-0.05064218647162956, 0.49252906877217784]])
+        ) < 1E-12
+    ).all()
+    assert (
+        torch.abs(
             model_c(_dict_to_tensors(data_dict))[1][0] - gradients_1
         ) < 1E-12
     ).all()
@@ -974,10 +965,84 @@ def test_export_painn() -> None:
             model_c(_dict_to_tensors(data_dict))[1][1] - gradients_2
         ) < 1E-12
     ).all()
+    assert (
+        model_c(_dict_to_tensors(data_dict))[1][0][1:3, :] == 0.0
+    ).all()
+    assert (
+        model_c(_dict_to_tensors(data_dict))[1][0][-1, :] == 0.0
+    ).all()
 
     os.remove('model.pt2')
+
+    model = mpair.cvs.PairCommittor(
+        mapping_names,
+        [1.0, 1.0],
+        model_options={
+            'cn_options': {
+                'n': 6,
+                'm': 12,
+                'r_0': 0.09,
+                'd_0': 0,
+                'd_max': 0.1,
+                'n_centers': 1,
+            },
+        }
+    )
+
+    dataset = batch.to_data_list()[0]
+    loader = tg.loader.DataLoader(
+        [dataset], batch_size=1, shuffle=False,
+    )
+    data_dict = next(iter(loader)).to_dict()
+
+    export(
+        model,
+        example_inputs=batch.to_data_list()[0],
+        file_name='model.pt2',
+        k_bias_options={
+            'calculate_k_bias': True,
+            'kb_epsilon': 1E-10,
+            'kb_lambda': -3.0,
+            'kb_weighted': True,
+            'kb_truncated': False,
+        },
+        n_atoms_padded=3,
+        n_atoms_padded_environment=3,
+    )
+    model_c = load_exported('model.pt2')
+
+    data_dict['positions'].requires_grad_(True)
+    outputs = model(data_dict)
+    grad_outputs: Optional[List[Optional[torch.Tensor]]] = [
+        torch.tensor(1, device=outputs.device)
+    ]
+    gradients_1 = torch.autograd.grad(
+        [outputs[0, 0]],
+        [data_dict['positions']],
+        grad_outputs=grad_outputs,
+        retain_graph=True,
+        create_graph=False,
+    )[0]
+
+    assert (
+        torch.abs(
+            model_c(_dict_to_tensors(data_dict))[1][0] - gradients_1
+        ) < 1E-12
+    ).all()
+    assert (
+        model_c(_dict_to_tensors(data_dict))[1][0][1:3, :] == 0.0
+    ).all()
+    assert (
+        model_c(_dict_to_tensors(data_dict))[1][0][-1, :] == 0.0
+    ).all()
+    assert (
+        model_c(_dict_to_tensors(data_dict))[3][0][1:3, :] == 0.0
+    ).all()
+    assert (
+        model_c(_dict_to_tensors(data_dict))[3][0][-1, :] == 0.0
+    ).all()
 
 
 if __name__ == '__main__':
-    test_export_schnet()
-    test_export_painn()
+    test_export_1()
+    test_export_2()

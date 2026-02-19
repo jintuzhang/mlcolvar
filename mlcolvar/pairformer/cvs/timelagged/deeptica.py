@@ -228,31 +228,14 @@ def test_deep_tica():
     torch.manual_seed(0)
     torch_tools.set_default_dtype('float64')
 
-    cv = PairDeepTICA(
-        2,
-        0.1,
-        [1, 8],
-        model_options={
-            'n_out': 6,
-            'n_bases': 6,
-            'n_polynomials': 6,
-            'n_layers': 2,
-            'n_messages': 2,
-            'n_feedforwards': 1,
-            'n_scalars_node': 16,
-            'n_vectors_node': 8,
-            'n_scalars_edge': 16,
-            'drop_rate': 0,
-            'activation': 'Tanh',
-        }
-    )
+    data, mapping_names = test_get_data()
 
-    data = test_get_data()
+    cv = PairDeepTICA(2, mapping_names)
 
     assert (
         torch.abs(
             cv(data)
-            - torch.tensor([[0.4301124873647384, -0.3866279366944752]] * 6)
+            - torch.tensor([[-1.2534413015122814, 1.1660525500707786]] * 6)
         ) < 1E-12
     ).all()
 

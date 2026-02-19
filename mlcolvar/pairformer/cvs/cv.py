@@ -234,61 +234,18 @@ class PairBaseCV(lightning.LightningModule):
         self._exporting_flag = bool(v)
 
 
-def test_get_data() -> tg.data.Batch:
-    # TODO: This is not a real test, but a helper function for other tests.
-    # Maybe should change its name.
-
-    numbers = [8, 1, 1]
-    positions = np.array(
-        [
-            [[0.0, 0.0, 0.0], [0.07, 0.07, 0.0], [0.07, -0.07, 0.0]],
-            [[0.0, 0.0, 0.0], [-0.07, 0.07, 0.0], [0.07, 0.07, 0.0]],
-            [[0.0, 0.0, 0.0], [0.07, -0.07, 0.0], [0.07, 0.07, 0.0]],
-            [[0.0, 0.0, 0.0], [0.0, -0.07, 0.07], [0.0, 0.07, 0.07]],
-            [[0.0, 0.0, 0.0], [0.07, 0.0, 0.07], [-0.07, 0.0, 0.07]],
-            [[0.1, 0.0, 1.1], [0.17, 0.07, 1.1], [0.17, -0.07, 1.1]],
-        ],
-        dtype=np.float64
-    )
-    cell = np.identity(3, dtype=float) * 0.2
-    graph_labels = np.array([[[0]], [[1]]] * 3)
-    node_labels = np.array([[0], [1], [1]])
-    z_table = pdata.atomic.AtomicNumberTable.from_zs(numbers)
-
-    config = [
-        pdata.atomic.Configuration(
-            atomic_numbers=numbers,
-            positions=positions[i],
-            cell=cell,
-            pbc=[True] * 3,
-            node_labels=node_labels,
-            graph_labels=graph_labels[i],
-        ) for i in range(0, 6)
-    ]
-    dataset = pdata.create_dataset_from_configurations(
-        config, z_table, 0.1, show_progress=False
-    )
-
-    loader = pdata.GraphDataModule(
-        dataset,
-        lengths=(1.0,),
-        batch_size=10,
-        shuffle=False,
-    )
-    loader.setup()
-
-    return next(iter(loader.train_dataloader()))
+test_get_data = models.test_get_data
 
 
 def test_base_cv() -> None:
     dtype = torch.get_default_dtype()
     torch.set_default_dtype(torch.float64)
 
-    cv = PairBaseCV(2, 0.1, [1, 2, 3], -1, 'GVPModel')
+    mapping_names = test_get_data()[1]
+
+    cv = PairBaseCV(2, mapping_names)
 
     assert cv.n_cvs == 2
-    assert (cv.cutoff - 0.1) < 1E-12
-    assert (cv._model.atomic_numbers == torch.tensor([1, 2, 3])).all()
 
     assert cv.optimizer_name == 'Adam'
     objects = cv.configure_optimizers()
@@ -319,10 +276,7 @@ def test_base_cv() -> None:
 
     cv = PairBaseCV(
         2,
-        0.1,
-        [1, 2, 3],
-        -1,
-        'GVPModel',
+        mapping_names,
         optimizer_options={
             'optimizer': {'lr': 2E-3, 'weight_decay': 1E-4},
             'lr_scheduler': {

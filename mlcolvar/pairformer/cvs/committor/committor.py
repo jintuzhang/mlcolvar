@@ -212,3 +212,27 @@ class PairCommittor(PairBaseCV):
         self.log(f'{name}_loss_boundary_B', loss_bound_B, on_epoch=True)
         self.log(f'{name}_loss_z_range', loss_z_range, on_epoch=True)
         return loss
+
+
+def test_committor():
+    torch.manual_seed(0)
+    torch_tools.set_default_dtype('float64')
+
+    data, mapping_names = test_get_data()
+
+    cv = PairCommittor(mapping_names, [1, 2])
+
+    assert (
+        torch.abs(
+            cv(data)
+            - torch.tensor([[0.10873606283495335, 0.58083648568948]] * 6)
+        ) < 1E-12
+    ).all()
+
+    assert torch.abs(
+        cv.training_step(data) - torch.tensor(17.569805172914553)
+    ) < 1E-12
+
+
+if __name__ == '__main__':
+    test_committor()

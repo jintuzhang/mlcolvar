@@ -188,6 +188,11 @@ class PairTimeLaggedCommittor(PairBaseCV):
             over_threshold.pow(2)
         )
 
+        # avoid nan
+        loss_a = torch.nan_to_num(loss_a)
+        loss_b = torch.nan_to_num(loss_b)
+        loss_v = torch.nan_to_num(loss_v, posinf=torch.inf, neginf=-torch.inf)
+
         loss = loss_v + loss_a + loss_b + loss_z_range
 
         name = 'train' if self.training else 'valid'
@@ -197,3 +202,27 @@ class PairTimeLaggedCommittor(PairBaseCV):
         self.log(f'{name}_loss_boundary_B', loss_b, on_epoch=True)
         self.log(f'{name}_loss_z_range', loss_z_range, on_epoch=True)
         return loss
+
+
+def test_tlcommittor():
+    torch.manual_seed(0)
+    torch_tools.set_default_dtype('float64')
+
+    data, mapping_names = test_get_data()
+
+    cv = PairTimeLaggedCommittor(mapping_names)
+
+    assert (
+        torch.abs(
+            cv(data)
+            - torch.tensor([[0.10873606283495335, 0.58083648568948]] * 6)
+        ) < 1E-12
+    ).all()
+
+    assert torch.isinf(
+        cv.training_step({'dataset_1': data, 'dataset_2': data})
+    )
+
+
+if __name__ == '__main__':
+    test_tlcommittor()

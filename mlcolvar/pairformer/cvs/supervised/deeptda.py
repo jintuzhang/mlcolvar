@@ -161,49 +161,36 @@ def test_deep_tda():
     torch.manual_seed(0)
     torch_tools.set_default_dtype('float64')
 
+    data, mapping_names = test_get_data()
+    data['graph_labels'][:2, 0] = 0
+
     cv = PairDeepTDA(
         2,
-        0.1,
-        [1, 8],
+        mapping_names,
         [[-1, -1], [1, 1]],
         [[1, 1], [1, 1]],
-        model_options={
-            'n_bases': 6,
-            'n_polynomials': 6,
-            'n_layers': 2,
-            'n_messages': 2,
-            'n_feedforwards': 1,
-            'n_scalars_node': 16,
-            'n_vectors_node': 8,
-            'n_scalars_edge': 16,
-            'drop_rate': 0,
-            'activation': 'SiLU',
-        },
-        extra_loss_options={'alpha': 1.0, 'beta': 100.0, 'gamma': 0.0}
     )
-
-    data = test_get_data()
 
     assert (
         torch.abs(
             cv(data)
-            - torch.tensor([[0.6100070244145421, -0.2559670171962067]] * 6)
+            - torch.tensor([[0.771122634223133, -0.2714238083585388]] * 6)
         ) < 1E-12
     ).all()
 
     assert torch.abs(
-        cv.training_step(data) - torch.tensor(404.8752553674548)
+        cv.training_step(data) - torch.tensor(405.3366020015101)
     ) < 1E-12
 
     try:
-        cv = PairDeepTDA(2, 0.1, [1, 8], [-1, 1], [1, 1])
+        cv = PairDeepTDA(2, mapping_names, [-1, 1], [1, 1])
     except ValueError:
         pass
     else:
         raise RuntimeError
 
     try:
-        cv = PairDeepTDA(2, 0.1, [1, 8], [[-1, -1], [1, 1]], [1, 1])
+        cv = PairDeepTDA(2, mapping_names, [[-1, -1], [1, 1]], [1, 1])
     except ValueError:
         pass
     else:

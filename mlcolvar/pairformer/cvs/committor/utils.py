@@ -3,8 +3,9 @@ import numpy as np
 
 from typing import Tuple, Dict, Optional, List
 from mlcolvar.pairformer.cvs.cv import PairBaseCV
+from mlcolvar.pairformer.cvs.cv import test_get_data
 from mlcolvar.pairformer import data as pdata
-from mlcolvar.pairformer import utils as gutils
+from mlcolvar.pairformer import utils as putils
 
 """
 Pairformer committor utils.
@@ -195,7 +196,7 @@ def pairformer_committor_loss(
         gradients_atomic, dim=1, keepdim=True
     )  # [n_nodes, 1]
     # sum over batchs
-    gradients_batch = gutils.torch_tools.scatter_sum(
+    gradients_batch = putils.torch_tools.scatter_sum(
         gradients_atomic, data['batch'], dim=0
     )  # [n_graphs, 1]
     # ensemble avg.
@@ -239,7 +240,7 @@ def get_dataset_kolmogorov_bias(
     ----------
     model : torch.nn.Module
         Model to compute the bias from.
-    dataset: mlcovar.graph.data.GraphDataSet
+    dataset: mlcovar.pairformer.data.PairDataSet
         Dataset on which to compute the bias.
     beta: float
         Inverse temperature in the right energy units, i.e. 1/(k_B*T)
@@ -276,7 +277,7 @@ def get_dataset_kolmogorov_bias(
     )
 
     if show_progress:
-        items = gutils.progress.pbar(
+        items = putils.progress.pbar(
             datamodule.train_dataloader(),
             frequency=0.001,
             prefix=progress_prefix
@@ -312,7 +313,7 @@ def get_dataset_kolmogorov_bias(
             gradients_atomic, dim=1, keepdim=True
         )  # [n_nodes, 1]
         # sum over batchs
-        gradients_batch = gutils.torch_tools.scatter_sum(
+        gradients_batch = putils.torch_tools.scatter_sum(
             gradients_atomic, batch_dict['batch'], dim=0
         )  # [n_graphs, 1]
 
@@ -385,3 +386,50 @@ def compute_committor_weights(
         dataset[i]['weight'] = weights[i]
 
     return dataset
+
+
+def test_committor_loss() -> None:
+    putils.torch_tools.set_default_dtype('float64')
+
+    loss = PairCommittorLoss(torch.tensor([1.0]), 1.0)
+
+    data = {
+        'positions': torch.tensor([[0.2, 0, 0], [1.8, 0, 0], [0.5, 0, 0]]),
+        'graph_labels': torch.tensor([[0], [1], [2]]),
+        'node_attrs': torch.tensor([[0], [0], [0]]),
+        'weight': torch.tensor([1.0, 1.0, 1.0]),
+        'batch': torch.tensor([0, 1, 2], dtype=torch.long),
+    }
+    data['positions'].requires_grad_(True)
+
+    q = data['positions'][:, 0] * 0.5
+    results = loss(data, q)
+
+    assert results[0] - torch.log(torch.tensor(1 / 2) ** 2) - 200 < 1E-12
+    assert results[1] - torch.log(torch.tensor(1 / 2) ** 2) < 1E-12
+    assert results[2] - 100.0 < 1E-12
+    assert results[3] - 100.0 < 1E-12
+
+
+def test_compute_committor_weights() -> None:
+    putils.torch_tools.set_default_dtype('float64')
+
+    data, _ = test_get_data()
+    data['graph_labels'] = torch.tensor([[0], [1]] + [[2]] * 4)
+    weights = torch.tensor([
+        d.weight for d in
+        compute_committor_weights(
+            data.to_data_list(), torch.tensor([0] * 4 + [1] * 2), 1.0
+        )
+    ])
+    z = (torch.e * 2 + 2) / 4
+
+    assert (
+        weights - torch.tensor([1.0] * 2 + [1 / z] * 2 + [torch.e / z] * 2)
+        < 1E-12
+    ).all()
+
+
+if __name__ == '__main__':
+    test_committor_loss()
+    test_compute_committor_weights()

@@ -2,7 +2,7 @@ import torch
 from torch import nn
 import numpy as np
 import torch_geometric as tg
-from typing import List, Dict, Optional, Any
+from typing import List, Dict, Optional, Any, Tuple
 
 from mlcolvar.pairformer import data as pdata
 from mlcolvar.pairformer.core.nn import radial
@@ -611,13 +611,12 @@ class CNModel(nn.Module):
         return self.r_0.device
 
 
-def test_get_data() -> tg.data.Batch:
+def test_get_data(c: bool = False) -> Tuple[tg.data.Batch, Dict[str, Any]]:
     # TODO: This is not a real test, but a helper function for other tests.
     # Maybe should change its name.
     torch.manual_seed(0)
     torch_tools.set_default_dtype('float64')
 
-    numbers = [8, 1, 1]
     positions = np.array(
         [
             [[0.0, 0.0, 0.0], [0.07, 0.07, 0.0], [0.07, -0.07, 0.0]],
@@ -631,24 +630,67 @@ def test_get_data() -> tg.data.Batch:
     )
     cell = np.identity(3, dtype=float) * 0.2
     graph_labels = np.array([[1]])
-    node_labels = np.array([[0], [1], [1]])
-    z_table = pdata.atomic.AtomicNumberTable.from_zs(numbers)
+    atom_names = ['O', 'H', 'H']
+    residue_names = ['H2O'] * 3
+    if not c:
+        config = [
+            pdata.atomic.Configuration(
+                positions=p,
+                cell=cell,
+                pbc=[True] * 3,
+                graph_labels=graph_labels,
+                node_labels=None,
+                node_attrs={
+                    'atom_names': atom_names, 'residue_names': residue_names
+                },
+            ) for p in positions
+        ]
+        dataset = pdata.create_dataset_from_configurations(
+            config,
+            mapping_tables={
+                'atom_names': pdata.atomic.GenericMappingTable.from_names(
+                    atom_names
+                ),
+                'residue_names': pdata.atomic.GenericMappingTable.from_names(
+                    residue_names
+                )
+            },
+            n_atoms_padded=3,
+            show_progress=False,
+        )
+    else:
+        config = [
+            pdata.atomic.Configuration(
+                positions=p,
+                cell=cell,
+                pbc=[True] * 3,
+                graph_labels=graph_labels,
+                node_labels=None,
+                node_attrs={
+                    'atom_names': atom_names, 'residue_names': residue_names
+                },
+                system=np.array([0]),
+                environment=np.array([1, 2]),
+                centers=np.array([[0]]),
+            ) for p in positions
+        ]
+        dataset = pdata.create_dataset_from_configurations(
+            config,
+            mapping_tables={
+                'atom_names': pdata.atomic.GenericMappingTable.from_names(
+                    atom_names
+                ),
+                'residue_names': pdata.atomic.GenericMappingTable.from_names(
+                    residue_names
+                )
+            },
+            cutoff=0.1,
+            n_atoms_padded=3,
+            show_progress=False,
+            n_atoms_padded_environment=3,
+        )
 
-    config = [
-        pdata.atomic.Configuration(
-            atomic_numbers=numbers,
-            positions=p,
-            cell=cell,
-            pbc=[True] * 3,
-            node_labels=node_labels,
-            graph_labels=graph_labels,
-        ) for p in positions
-    ]
-    dataset = pdata.create_dataset_from_configurations(
-        config, z_table, 0.1, show_progress=False
-    )
-
-    loader = pdata.GraphDataModule(
+    loader = pdata.PairDataModule(
         dataset,
         lengths=(1.0,),
         batch_size=10,
@@ -656,8 +698,69 @@ def test_get_data() -> tg.data.Batch:
     )
     loader.setup()
 
-    return next(iter(loader.train_dataloader()))
+    return next(iter(loader.train_dataloader())), dataset.mapping_names
+
+
+def test_pairformer() -> None:
+    torch.manual_seed(0)
+    torch_tools.set_default_dtype('float64')
+
+    data, mapping_names = test_get_data()
+
+    model = PairFormerModel(2, mapping_names)
+
+    assert (
+        torch.abs(
+            model(data) -
+            torch.tensor([[0.771122634223133, -0.2714238083585388]] * 6)
+        ) < 1E-12
+    ).all()
+
+    data['cell'] = torch.zeros((6, 1), dtype=float)
+    assert (
+        torch.abs(
+            model(data) -
+            torch.tensor([[0.7699681542284031, -0.27189165318942404]] * 6)
+        ) < 1E-12
+    ).all()
+
+    data, mapping_names = test_get_data(True)
+
+    model = PairFormerModel(
+        2,
+        mapping_names,
+        cn_options={
+            'n': 6,
+            'm': 12,
+            'r_0': 0.09,
+            'd_0': 0,
+            'd_max': 0.1,
+            'n_centers': 1,
+        },
+    )
+    assert (
+        torch.abs(
+            model(data) -
+            torch.tensor([[-0.05064218647162956, 0.49252906877217784]] * 6)
+        ) < 1E-12
+    ).all()
+
+
+def test_cn() -> None:
+    torch.manual_seed(0)
+    torch_tools.set_default_dtype('float64')
+
+    data, mapping_names = test_get_data(True)
+    model = CNModel(6, 12, 0.09, 0.0, 0.1)
+
+    assert (
+        torch.abs(
+            model(data) -
+            torch.tensor([[0.042448066282396]] * 6)
+        ) < 1E-12
+    ).all()
 
 
 if __name__ == '__main__':
-    pass
+    test_pairformer()
+    test_cn()
