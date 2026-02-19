@@ -309,6 +309,30 @@ def _ptr_to_edge_index_fc_static(
     return block
 
 
+def _set_check_dtype_device_cxx(
+    model: LightningModule,
+) -> LightningModule:
+
+    if model.device.type == 'cpu':
+        if torch._inductor.config.cpp.cxx != 'clang++':
+            torch._inductor.config.cpp.cxx = 'clang++'
+            warnings.warn(
+                'You are exporting a PairFormer model on CPU, this will '
+                + 'require the clang++ compiler. On Debian-like systems '
+                + 'you may install it with command: '
+                + '`sudo apt install clang libomp-dev`.'
+            )
+        if model.dtype != torch.float64:
+            raise RuntimeError(
+                'You are exporting a PairFormer model on CPU, this will '
+                + 'require the model dtype to be float64. You can apply the '
+                + '`mlcolvar.pairformer.torch_tools.set_default_dtype` method '
+                + 'at the begining of your export script.'
+            )
+
+    return model
+
+
 def _get_inputs(
     data: tg.data.Data,
     device: str = 'cpu',
@@ -675,7 +699,17 @@ def export(
 
     5. The exported models are NOT portable, they will not run on machines
     other than the one where there were exported.
+
+    6. If exporting on CPU is desired, a `clang++` compiler should be
+    installed. On Debian-like systems, this compiler can be installed with
+    command:
+    ```bash
+    sudo apt install clang libomp-dev
+    ```
+    Besides, the model precision has to be float64.
     """
+
+    model = _set_check_dtype_device_cxx(model)
 
     torch._dynamo.allow_in_graph(torch.autograd.grad)
     torch._dynamo.allow_in_graph(torch.autograd.functional.jacobian)
