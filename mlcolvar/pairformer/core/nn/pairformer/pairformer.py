@@ -41,7 +41,7 @@ class Dropout(nn.Module):
         super(Dropout, self).__init__()
 
         self.r = r
-        if type(batch_dim) is not int:
+        if type(batch_dim) is int:
             batch_dim = [batch_dim]
         self.batch_dim = batch_dim
         self.dropout = nn.Dropout(self.r)
