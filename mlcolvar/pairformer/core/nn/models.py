@@ -188,6 +188,8 @@ class PairFormerModel(BaseModel):
     cutoff: float
         Cutoff radius of the basis functions. If a negative value is given,
         will not use radial basis functions to expand distances.
+    constant_d: float
+        Constant used in distance basis: 1.0 / (constant_d + d ** 2).
     n_bases: int
         Size of the basis set.
     n_layers: int
@@ -230,6 +232,7 @@ class PairFormerModel(BaseModel):
         n_out: int,
         mapping_names: Dict[str, List[str]],
         cutoff: float = -1.0,
+        constant_d: float = 1.0,
         n_bases: int = 0,
         n_layers: int = 1,
         n_heads_apb: int = 1,
@@ -306,6 +309,7 @@ class PairFormerModel(BaseModel):
         self._mapping_names = mapping_names
         self._n_embedding_pair = n_embedding_pair
         self._n_centers = n_out_w_c // 2
+        self._c_d = constant_d
 
         self.reset_parameters()
 
@@ -391,7 +395,7 @@ class PairFormerModel(BaseModel):
             pair_lengths = pair_lengths.reshape(
                 (n_graphs, n_atoms, n_atoms)
             ).unsqueeze(-1)
-            pair_lengths = self.W_x(1.0 / (1.0 + pair_lengths ** 2))
+            pair_lengths = self.W_x(1.0 / (self._c_d + pair_lengths ** 2))
 
         # layer one: distances only
         _, embedding_pair = self.layers[0](
