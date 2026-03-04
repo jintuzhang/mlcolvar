@@ -630,10 +630,6 @@ def export(
     Thus, avoid using these aggregation modules. See the
     `mlcolvar.graph.utils.export._EXCLUDED_AGGR_MODULES` attribute for the
     name of these modules.
-
-    7. The PaiNN model does not work with the truncated graph method currently,
-    which means, exported PaiNN models require the number of input nodes to be
-    a constant during MD runs.
     """
 
     _check_aggr_modules(model)

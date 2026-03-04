@@ -441,13 +441,7 @@ class PaiNNModel(BaseModel):
 
         h_E = self.embed_edge(data)
         h_V_s = self.W_v(data['node_attrs'])
-        h_V_v = torch.zeros(
-            len(data['node_attrs']),
-            h_V_s.shape[1],
-            3,
-            dtype=data['node_attrs'].dtype,
-            device=data['node_attrs'].device,
-        )
+        h_V_v = torch.zeros_like(h_V_s).unsqueeze(-1).expand(-1, -1, 3)
 
         batch_id = data['batch']
 
@@ -501,13 +495,7 @@ class PaiNNModel(BaseModel):
 
         h_E = self.embed_edge(data)
         h_V_s = self.W_v(data['node_attrs'])
-        h_V_v = torch.zeros(
-            len(data['node_attrs']),
-            h_V_s.shape[1],
-            3,
-            dtype=data['node_attrs'].dtype,
-            device=data['node_attrs'].device,
-        )
+        h_V_v = torch.zeros_like(h_V_s).unsqueeze(-1).expand(-1, -1, 3)
 
         for message, update in zip(self.layers_message, self.layers_update):
             s_temp, v_temp = message(
