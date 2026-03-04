@@ -630,6 +630,8 @@ def export(
     Thus, avoid using these aggregation modules. See the
     `mlcolvar.graph.utils.export._EXCLUDED_AGGR_MODULES` attribute for the
     name of these modules.
+
+    7. It is recommended to use PyTorch v2.9 or later for this feature.
     """
 
     _check_aggr_modules(model)
