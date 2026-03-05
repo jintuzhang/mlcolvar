@@ -649,10 +649,10 @@ def export(
     -----
     A few remarks are in order:
 
-    1. dtype and running device of the model will be fixed after export, which
-    means that one can not exporting a model stored on CPU and then inference
-    on GPU. To ensure that the exported model will has the desired dtype and/or
-    running device, one should move the model before the export:
+    1. The dtype and running device of the model are fixed after export. This
+    means that one cannot export a model stored on the CPU and later run
+    inference on a GPU. To ensure that the exported model has the desired dtype
+    and/or running device, move the model before exporting:
 
     ```python
     model = mlcolvar.pairformer.cvs.PairDeepTICA(...)
@@ -661,16 +661,15 @@ def export(
     mlcolvar.pairformer.utils.export.export(cv, example_inputs=dataset[0])
     ```
 
-    2. The exported models are generally MUCH FASTER when running on GPUs. Thus
-    it is strongly recommended to compile your `PLUMED` interface using the
-    CUDA version of LibTorch.
+    2. Exported models generally run much faster on GPUs. Therefore, it is
+    strongly recommended to compile the `PLUMED` interface using a CUDA-enabled
+    version of `LibTorch`.
 
-    3. Unlike the JIT compilation, where the gradient calculation of the model
-    is done by `torch.autograd.grad` calls in a on-the-fly manner, computation
-    graph of the gradient calculation in exported models are statically
-    compiled. As a result, one can not change the Kolmogorov bias calculation
-    parameters at run time. Instead, these parameters should be given at
-    compilation time:
+    3. Unlike JIT compilation where gradient computation is performed on the
+    fly using `torch.autograd.grad`, the computation graph for gradient
+    calculations in exported models is statically compiled. As a result,
+    Kolmogorov bias calculation parameters cannot be changed at runtime.
+    Instead, these parameters must be specified during export:
 
     ```python
     model = mlcolvar.pairformer.cvs.PairCommittor(...)
@@ -686,9 +685,9 @@ def export(
     If one would like the change these parameters, the model should be
     re-exported using the updated parameters.
 
-    4. When using CUDA, the export operation requires the CUDA library. Make
-    sure that PyTorch is able to find the library, e.g., setting the following
-    environment variables before doing the export:
+    4. When using CUDA, the export process requires the CUDA toolkit to be
+    available. Make sure PyTorch can locate the CUDA libraries. For example,
+    set the following environment variables before exporting:
 
     ```bash
     export CUDA_HOME=/usr/local/cuda-12.9
@@ -697,8 +696,8 @@ def export(
     export C_INCLUDE_PATH=$C_INCLUDE_PATH:/usr/local/cuda-12.9/include
     ```
 
-    5. The exported models are NOT portable, they will not run on machines
-    other than the one where there were exported.
+    5. Exported models are not portable. They may not run correctly on machines
+    other than the one where they were exported.
 
     6. If exporting on CPU is desired, a `clang++` compiler should be
     installed. On Debian-like systems, this compiler can be installed with
@@ -707,6 +706,8 @@ def export(
     sudo apt install clang libomp-dev
     ```
     Besides, the model precision has to be float64.
+
+    7. It is recommended to use PyTorch v2.9 or later for this feature.
     """
 
     model = _set_check_dtype_device_cxx(model)
