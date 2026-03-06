@@ -18,7 +18,7 @@ __all__ = ['BaseModel', 'PairFormerModel']
 
 class BaseModel(nn.Module):
     """
-    The commen PairFormer interface for mlcolvar.
+    The common PairFormer interface for mlcolvar.
 
     Parameters
     ----------
@@ -455,12 +455,7 @@ class CNModel(nn.Module):
     """
 
     def __init__(
-        self,
-        n: int,
-        m: int,
-        r_0: float,
-        d_0: float,
-        d_max: float,
+        self, n: int, m: int, r_0: float, d_0: float, d_max: float,
     ) -> None:
 
         super().__init__()
