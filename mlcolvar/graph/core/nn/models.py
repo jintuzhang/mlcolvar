@@ -20,7 +20,7 @@ __all__ = ['BaseModel', 'GVPModel', 'SchNetModel', 'PaiNNModel']
 
 class BaseModel(nn.Module):
     """
-    The commen GNN interface for mlcolvar.
+    The common GNN interface for mlcolvar.
 
     Parameters
     ----------
