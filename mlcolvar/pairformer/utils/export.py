@@ -3,6 +3,7 @@ import json
 import uuid
 import zipfile
 import warnings
+import functools
 
 import torch
 import torch._inductor.package
@@ -269,10 +270,15 @@ def _get_mic_distances_static(
     n_edges: torch.Tensor,
     normalize: bool = True,
     eps: float = 1E-15,
+    is_orthogonal: bool = False,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
 
     n_edges = edge_index.shape[1]
-    cells_inv = torch.linalg.pinv(cells.transpose(2, 1))
+    if is_orthogonal:
+        reciprocal = 1.0 / torch.diagonal(cells, dim1=-2, dim2=-1)
+        cells_inv = torch.diag_embed(reciprocal)
+    else:
+        cells_inv = torch.linalg.pinv(cells.transpose(2, 1))
     cells_inv_nodes = torch.repeat_interleave(cells_inv, n_edges, dim=0)
     cells_nodes = torch.repeat_interleave(
         cells.transpose(2, 1), n_edges, dim=0
@@ -293,6 +299,45 @@ def _get_mic_distances_static(
         vectors = torch.nan_to_num(torch.div(vectors, lengths))
 
     return vectors, lengths
+
+
+def _get_mic_distances_2_static(
+    positions_1: torch.Tensor,
+    positions_2: torch.Tensor,
+    edge_index: torch.Tensor,
+    cells: torch.Tensor,
+    n_edges: torch.Tensor,
+    normalize: bool = True,
+    eps: float = 0.0,
+    is_orthogonal: bool = False,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+
+    if is_orthogonal:
+        reciprocal = 1.0 / torch.diagonal(cells, dim1=-2, dim2=-1)
+        cells_inv = torch.diag_embed(reciprocal)
+    else:
+        cells_inv = torch.linalg.pinv(cells.transpose(2, 1))
+    cells_inv_nodes = torch.repeat_interleave(cells_inv, n_edges, dim=0)
+    cells_nodes = torch.repeat_interleave(
+        cells.transpose(2, 1), n_edges, dim=0
+    )
+
+    positions_1 = positions_1[edge_index[0]]
+    positions_2 = positions_2[edge_index[1]]
+    positions_1_s = torch.einsum('bi,bij->bj', positions_1, cells_inv_nodes)
+    positions_2_s = torch.einsum('bi,bij->bj', positions_2, cells_inv_nodes)
+    deltas = positions_1_s - positions_2_s
+    unit_shifts = torch.round(deltas)
+    shifts = torch.einsum('bi,bij->bj', unit_shifts, cells_nodes)
+
+    vectors = positions_2 - positions_1 + shifts + eps
+    lengths = torch.linalg.norm(vectors, dim=-1, keepdim=True)
+
+    if normalize:
+        vectors = torch.nan_to_num(torch.div(vectors, lengths))
+
+    return vectors, lengths
+
 
 
 def _ptr_to_edge_index_fc_static(
@@ -610,6 +655,7 @@ def export(
     n_atoms_padded: int = 0,
     n_atoms_padded_environment: int = 0,
     model_summary_level: int = 3,
+    check_is_orthogonal: bool = True,
 ) -> str:
     """
     Export a CV model using symbolic tracing and Ahead-Of-Time (AOT)
@@ -644,6 +690,11 @@ def export(
         Number of nodes after padding.
     n_atoms_padded_environment: int
         Number of environment nodes after padding.
+    check_is_orthogonal: bool
+        Check if the cell matrix is orthogonal. If enabled, when the cell is
+        orthogonal a fast matrix inv method will be used. However, models
+        exported in such a way could only be applied to systems with an
+        orthogonal box.
 
     Notes
     -----
@@ -733,11 +784,30 @@ def export(
     scatter_sum = torch_tools.scatter_sum
     scatter_mean = torch_tools.scatter_mean
     get_mic_distances = torch_tools.get_mic_distances
+    get_mic_distances_2 = torch_tools.get_mic_distances_2
     ptr_to_edge_index_fc = torch_tools.ptr_to_edge_index_fc
     torch_tools.scatter_sum = _scatter_sum_static
     torch_tools.scatter_mean = _scatter_mean_static
     torch_tools.get_mic_distances = _get_mic_distances_static
+    torch_tools.get_mic_distances_2 = _get_mic_distances_2_static
     torch_tools.ptr_to_edge_index_fc = _ptr_to_edge_index_fc_static
+
+    cell = example_inputs['cell']
+    if cell.shape[1] == 3 and check_is_orthogonal:
+        mask = torch.eye(3, dtype=torch.bool, device=cell.device)
+        off_diag = example_inputs['cell'][~mask]
+        is_orthogonal = off_diag.abs().max() < 1E-7
+        if is_orthogonal:
+            torch_tools.get_mic_distances = functools.partial(
+                _get_mic_distances_static, is_orthogonal=True
+            )
+            torch_tools.get_mic_distances_2 = functools.partial(
+                _get_mic_distances_2_static, is_orthogonal=True
+            )
+            warnings.warn(
+                'Fast inv method is enabled. Make sure that your simulation '
+                + 'box is orthogonal when performing MD simulations.'
+            )
 
     if is_committor:
         k_bias_options = _regularize_k_bias_options(model, k_bias_options)
@@ -785,6 +855,7 @@ def export(
     torch_tools.scatter_sum = scatter_sum
     torch_tools.scatter_mean = scatter_mean
     torch_tools.get_mic_distances = get_mic_distances
+    torch_tools.get_mic_distances_2 = get_mic_distances_2
     torch_tools.ptr_to_edge_index_fc = ptr_to_edge_index_fc
     model._exporting = False
 
@@ -1042,6 +1113,8 @@ def test_export_2() -> None:
     assert (
         model_c(_dict_to_tensors(data_dict))[3][0][-1, :] == 0.0
     ).all()
+
+    os.remove('model.pt2')
 
 
 if __name__ == '__main__':

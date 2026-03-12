@@ -1,5 +1,5 @@
 import torch
-from typing import Tuple, Optional, List
+from typing import Tuple, Optional
 
 """
 Helper functions for torch. These modules are taken from MACE directly:
