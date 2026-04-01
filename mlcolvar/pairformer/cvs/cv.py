@@ -138,8 +138,8 @@ class PairBaseCV(lightning.LightningModule):
     def forward(
         self,
         data: Dict[str, torch.Tensor],
-        token: bool = False
-    ) -> torch.Tensor:
+        return_lengths: bool = False
+    ) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
         """
         The forward pass.
 
@@ -148,14 +148,14 @@ class PairBaseCV(lightning.LightningModule):
         data: Dict[str, torch.Tensor]
             The data dict. Usually came from the `to_dict` method of a
             `torch_geometric.data.Batch` object.
-        token: bool
-            To be used.
+        return_lengths: bool
+            If return distances for gradient calculations.
         """
 
         if not self._exporting:
             data['positions'].requires_grad_(True)
 
-        return self._model(data)
+        return self._model(data, return_lengths=return_lengths)
 
     def validation_step(self, *args, **kwargs) -> torch.Tensor:
         """

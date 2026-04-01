@@ -1,7 +1,7 @@
 import torch
 import warnings
 import torch_geometric as tg
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Union, Tuple
 
 from mlcolvar.core.stats import TICA
 from mlcolvar.core.nn.utils import Custom_Sigmoid
@@ -108,7 +108,7 @@ class PairDeepTICA(PairBaseCV):
     def forward_nn(
         self,
         data: Dict[str, torch.Tensor],
-        token: bool = False
+        return_lengths: bool = False
     ) -> torch.Tensor:
         """
         The forward pass for the NN.
@@ -118,20 +118,20 @@ class PairDeepTICA(PairBaseCV):
         data: Dict[str, torch.Tensor]
             The data dict. Usually came from the `to_dict` method of a
             `torch_geometric.data.Batch` object.
-        token: bool
-            To be used.
+        return_lengths: bool
+            If return distances for gradient calculations.
         """
 
         if not self._exporting:
             data['positions'].requires_grad_(True)
 
-        return self._model(data)
+        return self._model(data, return_lengths=return_lengths)
 
     def forward(
         self,
         data: Dict[str, torch.Tensor],
-        token: bool = False
-    ) -> torch.Tensor:
+        return_lengths: bool = False
+    ) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
         """
         The forward pass.
 
@@ -140,19 +140,23 @@ class PairDeepTICA(PairBaseCV):
         data: Dict[str, torch.Tensor]
             The data dict. Usually came from the `to_dict` method of a
             `torch_geometric.data.Batch` object.
-        token: bool
-            To be used.
+        return_lengths: bool
+            If return distances for gradient calculations.
         """
-        nn_outputs = self.forward_nn(data)
-        outputs = self.tica(nn_outputs)
+        nn_outputs = self.forward_nn(data, return_lengths)
 
-        return outputs
+        if return_lengths:
+            outputs = self.tica(nn_outputs[0])
+            return outputs, nn_outputs[1]
+        else:
+            outputs = self.tica(nn_outputs)
+            return outputs
 
     def forward_eigenfunctions(
         self,
         data: Dict[str, torch.Tensor],
-        token: bool = False
-    ) -> torch.Tensor:
+        return_lengths: bool = False
+    ) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
         """
         The forward pass to get the eigenfunctions. This is identical to the
         `forword` method when `use_sigmoid` is not enabled.
@@ -162,8 +166,8 @@ class PairDeepTICA(PairBaseCV):
         data: Dict[str, torch.Tensor]
             The data dict. Usually came from the `to_dict` method of a
             `torch_geometric.data.Batch` object.
-        token: bool
-            To be used.
+        return_lengths: bool
+            If return distances for gradient calculations.
         """
         nn_outputs = self.forward_nn(data)
         if self._use_sigmoid:

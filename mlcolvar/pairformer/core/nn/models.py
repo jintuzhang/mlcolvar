@@ -2,7 +2,7 @@ import torch
 from torch import nn
 import numpy as np
 import torch_geometric as tg
-from typing import List, Dict, Optional, Any, Tuple
+from typing import List, Dict, Optional, Any, Tuple, Union, Union
 
 from mlcolvar.pairformer import data as pdata
 from mlcolvar.pairformer.core.nn import radial
@@ -114,8 +114,11 @@ class FFNNModel(BaseModel):
                 m.bias.data.fill_(0)
 
     def forward(
-        self, data: Dict[str, torch.Tensor], scatter_mean: bool = True
-    ) -> torch.Tensor:
+        self,
+        data: Dict[str, torch.Tensor],
+        scatter_mean: bool = True,
+        return_lengths: bool = False,
+    ) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
         """
         The forward pass.
 
@@ -126,6 +129,8 @@ class FFNNModel(BaseModel):
             `torch_geometric.data.Batch` object.
         scatter_mean: bool
             If perform the scatter mean to the model output.
+        return_lengths: bool
+            If return distances for gradient calculations.
         """
 
         cell = data['cell']
@@ -165,12 +170,18 @@ class FFNNModel(BaseModel):
                 eps=1E-7,
             )
 
+        if return_lengths:
+            pair_lengths_ = pair_lengths
+
         h = pair_lengths.reshape((n_graphs, n_atoms * n_atoms))
 
         for layer in self.layers:
             h = layer(h)
 
-        return h
+        if return_lengths:
+            return h, pair_lengths_
+        else:
+            return h
 
 
 class PairFormerModel(BaseModel):
@@ -333,8 +344,11 @@ class PairFormerModel(BaseModel):
             self.W_c.bias.data.fill_(0)
 
     def forward(
-        self, data: Dict[str, torch.Tensor], scatter_mean: bool = True
-    ) -> torch.Tensor:
+        self,
+        data: Dict[str, torch.Tensor],
+        scatter_mean: bool = True,
+        return_lengths: bool = False,
+    ) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
         """
         The forward pass.
 
@@ -345,6 +359,8 @@ class PairFormerModel(BaseModel):
             `torch_geometric.data.Batch` object.
         scatter_mean: bool
             If perform the scatter mean to the model output.
+        return_lengths: bool
+            If return distances for gradient calculations.
         """
 
         cell = data['cell']
@@ -384,6 +400,8 @@ class PairFormerModel(BaseModel):
                 normalize=False,
                 eps=1E-7,
             )
+        if return_lengths:
+            pair_lengths_ = pair_lengths
         if self._radial_embedding is not None:
             pair_lengths = self._radial_embedding(pair_lengths)
             if self.W_b is not None:
@@ -433,7 +451,10 @@ class PairFormerModel(BaseModel):
             cn = self.W_c(self.cn_layer(data))
             out = torch.hstack([out, cn])
 
-        return self.W_out(out)
+        if return_lengths:
+            return self.W_out(out), pair_lengths_
+        else:
+            return self.W_out(out)
 
 
 class CNModel(nn.Module):

@@ -2,4 +2,4 @@
 Metaphysics.
 """
 
-from .sensitivity import graph_node_sensitivity
+from .sensitivity import node_sensitivity, pair_sensitivity

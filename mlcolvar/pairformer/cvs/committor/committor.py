@@ -1,6 +1,6 @@
 import torch
 import torch_geometric as tg
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Union, Tuple
 
 from mlcolvar.core.nn.utils import Custom_Sigmoid
 
@@ -132,8 +132,8 @@ class PairCommittor(PairBaseCV):
     def forward_nn(
         self,
         data: Dict[str, torch.Tensor],
-        token: bool = False
-    ) -> torch.Tensor:
+        return_lengths: bool = False
+    ) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
         """
         The forward pass for the NN.
 
@@ -142,20 +142,20 @@ class PairCommittor(PairBaseCV):
         data: Dict[str, torch.Tensor]
             The data dict. Usually came from the `to_dict` method of a
             `torch_geometric.data.Batch` object.
-        token: bool
-            To be used.
+        return_lengths: bool
+            If return distances for gradient calculations.
         """
 
         if not self._exporting:
             data['positions'].requires_grad_(True)
 
-        return self._model(data)
+        return self._model(data, return_lengths=return_lengths)
 
     def forward(
         self,
         data: Dict[str, torch.Tensor],
-        token: bool = False
-    ) -> torch.Tensor:
+        return_lengths: bool = False
+    ) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
         """
         The forward pass.
 
@@ -164,13 +164,17 @@ class PairCommittor(PairBaseCV):
         data: Dict[str, torch.Tensor]
             The data dict. Usually came from the `to_dict` method of a
             `torch_geometric.data.Batch` object.
-        token: bool
-            To be used.
+        return_lengths: bool
+            If return distances for gradient calculations.
         """
-        z = self.forward_nn(data)
-        q = self.sigmoid(z)
+        z = self.forward_nn(data, return_lengths)
 
-        return torch.hstack([z, q])
+        if return_lengths:
+            q = self.sigmoid(z[0])
+            return torch.hstack([z[0], q]), z[1]
+        else:
+            q = self.sigmoid(z)
+            return torch.hstack([z, q])
 
     def training_step(
         self, train_batch: tg.data.Batch, *args, **kwargs
