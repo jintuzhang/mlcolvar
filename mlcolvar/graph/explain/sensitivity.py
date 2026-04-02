@@ -35,7 +35,7 @@ def graph_node_sensitivity(
         Dataset on which to compute the sensitivity analysis.
     device: str
         Name of the device.
-    batch_size:
+    batch_size: int
         Batch size used for evaluating the CV.
     show_progress: bool
         If show the progress bar.
@@ -68,7 +68,10 @@ def graph_node_sensitivity(
         show_progress,
         'Getting gradients'
     )
-    sensitivities_components = [np.linalg.norm(g, axis=-1) for g in gradients]
+    weights = [d['weight'].item() for d in dataset]
+    sensitivities_components = [
+        w * np.linalg.norm(g, axis=-1) for g, w in zip(gradients, weights)
+    ]
 
     results = {}
     try:

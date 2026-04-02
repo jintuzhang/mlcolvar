@@ -31,7 +31,7 @@ def get_dataset_cv_values(
         Collective variable model.
     dataset: mlcovar.graph.data.GraphDataSet
         Dataset on which to compute the sensitivity analysis.
-    batch_size:
+    batch_size: int
         Batch size used for evaluating the CV.
     show_progress: bool
         If show the progress bar.
@@ -86,7 +86,7 @@ def get_dataset_cv_gradients(
         Dataset on which to compute the sensitivity analysis.
     component: int
         Component of the CV to analysis.
-    batch_size:
+    batch_size: int
         Batch size used for evaluating the CV.
     show_progress: bool
         If show the progress bar.
