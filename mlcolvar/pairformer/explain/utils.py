@@ -86,7 +86,7 @@ def get_dataset_cv_gradients(
         Dataset on which to compute the sensitivity analysis.
     component: int
         Component of the CV to analysis.
-    batch_size:
+    batch_size: int
         Batch size used for evaluating the CV.
     show_progress: bool
         If show the progress bar.
@@ -140,6 +140,7 @@ def get_dataset_cv_gradients_pair(
     device: str = 'cpu',
     batch_size: int = None,
     show_progress: bool = True,
+    return_lengths: bool = False,
     progress_prefix: str = 'Calculating CV gradients'
 ) -> tp.List[np.ndarray]:
     """
@@ -154,8 +155,10 @@ def get_dataset_cv_gradients_pair(
         Dataset on which to compute the sensitivity analysis.
     component: int
         Component of the CV to analysis.
-    batch_size:
+    batch_size: int
         Batch size used for evaluating the CV.
+    return_lengths: bool
+        If return distances.
     show_progress: bool
         If show the progress bar.
     """
@@ -168,6 +171,7 @@ def get_dataset_cv_gradients_pair(
     )
     datamodule.setup()
 
+    pair_length_list = []
     cv_value_gradients = []
 
     if show_progress:
@@ -195,5 +199,13 @@ def get_dataset_cv_gradients_pair(
         n_graphs = batch_dict['ptr'].numel() - 1
         gradients = gradients[0].reshape(n_graphs, n_atoms, n_atoms).detach()
         cv_value_gradients.append(gradients.cpu().numpy())
+        pair_length_list.append(
+            pair_lengths.reshape(
+                n_graphs, n_atoms, n_atoms
+            ).detach().cpu().numpy()
+        )
 
-    return np.vstack(cv_value_gradients)
+    if return_lengths:
+        return np.vstack(cv_value_gradients), np.vstack(pair_length_list)
+    else:
+        return np.vstack(cv_value_gradients)

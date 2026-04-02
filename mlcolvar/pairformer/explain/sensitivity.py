@@ -35,7 +35,7 @@ def node_sensitivity(
         Dataset on which to compute the sensitivity analysis.
     device: str
         Name of the device.
-    batch_size:
+    batch_size: int
         Batch size used for evaluating the CV.
     show_progress: bool
         If show the progress bar.
@@ -67,7 +67,10 @@ def node_sensitivity(
         show_progress,
         'Getting gradients'
     )
-    sensitivities_components = [np.linalg.norm(g, axis=-1) for g in gradients]
+    weights = [d['weight'].item() for d in dataset]
+    sensitivities_components = [
+        w * np.linalg.norm(g, axis=-1) for g, w in zip(gradients, weights)
+    ]
 
     results = {}
     try:
@@ -110,7 +113,7 @@ def pair_sensitivity(
         Dataset on which to compute the sensitivity analysis.
     device: str
         Name of the device.
-    batch_size:
+    batch_size: int
         Batch size used for evaluating the CV.
     show_progress: bool
         If show the progress bar.
@@ -133,20 +136,27 @@ def pair_sensitivity(
     except AttributeError:
         device_org = None
 
-    gradients = get_dataset_cv_gradients_pair(
+    gradients, pair_lengths = get_dataset_cv_gradients_pair(
         model,
         dataset,
         component,
         device,
         batch_size,
+        True,
         show_progress,
         'Getting gradients'
     )
     sensitivities_components = gradients
-    print(sensitivities_components.shape)
+    weights = np.array([d['weight'].item() for d in dataset])
+    weights = np.expand_dims(
+        weights, axis=tuple(range(1, sensitivities_components.ndim))
+    )
+    weights = weights * (
+        np.max(pair_lengths, axis=0) - np.min(pair_lengths, axis=0)
+    )
 
     results = {}
-    sensitivities = np.abs(sensitivities_components).mean(axis=0)
+    sensitivities = (np.abs(sensitivities_components) * weights).mean(axis=0)
     sensitivities = sensitivities * (1 - np.eye(dataset.n_atoms_padded))
     results['sensitivities'] = (sensitivities + sensitivities.T) / 2
     results['sensitivities_components'] = sensitivities_components
