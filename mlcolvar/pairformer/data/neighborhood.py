@@ -86,9 +86,9 @@ def get_neighborhood_of_centers(
     )
 
     # Get environment atoms that are neighbors of the system.
-    keep_edge_r = np.where(np.in1d(receiver, center_indices))[0]
+    keep_edge_r = np.where(np.isin(receiver, center_indices))[0]
     keep_sender = np.intersect1d(sender[keep_edge_r], environment_indices)
-    keep_edge_s = np.where(np.in1d(sender, np.unique(keep_sender)))[0]
+    keep_edge_s = np.where(np.isin(sender, np.unique(keep_sender)))[0]
     keep_edge = np.intersect1d(keep_edge_r, keep_edge_s)
 
     return np.unique(sender[keep_edge])
