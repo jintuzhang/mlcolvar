@@ -38,6 +38,9 @@ class PairDeepTDA(PairBaseCV):
         Extra loss function options.
     optimizer_options: Dict[Any, Any]
         Optimizer options.
+    sync_dist: bool
+        If reduces the metric across devices. Use with care as this may lead to
+        a significant communication overhead.
 
     References
     ----------
@@ -63,6 +66,7 @@ class PairDeepTDA(PairBaseCV):
             'alpha': 1.0, 'beta': 100.0, 'gamma': 0.0,
         },
         optimizer_options: Dict[Any, Any] = {},
+        sync_dist: bool = True,
         **kwargs,
     ) -> None:
         if model_options.pop('n_out', None) is not None:
@@ -111,6 +115,7 @@ class PairDeepTDA(PairBaseCV):
         elif len(target_centers.shape) > 2:
             raise ValueError('Too much target_centers dimensions!')
 
+        self._sync_dist = sync_dist
         self._gamma = extra_loss_options.pop('gamma', 0.0)
         self.loss_fn = TDALoss(
             n_states=target_centers.shape[0],
@@ -150,10 +155,34 @@ class PairDeepTDA(PairBaseCV):
             loss_ortho = 0.0
 
         name = 'train' if self.training else 'valid'
-        self.log(f'{name}_loss', loss, on_epoch=True)
-        self.log(f'{name}_loss_centers', loss_centers, on_epoch=True)
-        self.log(f'{name}_loss_sigmas', loss_sigmas, on_epoch=True)
-        self.log(f'{name}_loss_ortho', loss_ortho, on_epoch=True)
+        self.log(
+            f'{name}_loss',
+            loss,
+            on_step=False,
+            on_epoch=True,
+            sync_dist=self._sync_dist,
+        )
+        self.log(
+            f'{name}_loss_centers',
+            loss_centers,
+            on_step=False,
+            on_epoch=True,
+            sync_dist=self._sync_dist,
+        )
+        self.log(
+            f'{name}_loss_sigmas',
+            loss_sigmas,
+            on_step=False,
+            on_epoch=True,
+            sync_dist=self._sync_dist,
+        )
+        self.log(
+            f'{name}_loss_ortho',
+            loss_ortho,
+            on_step=False,
+            on_epoch=True,
+            sync_dist=self._sync_dist,
+        )
         return loss
 
 

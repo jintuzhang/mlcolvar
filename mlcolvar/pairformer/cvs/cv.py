@@ -32,6 +32,9 @@ class PairBaseCV(lightning.LightningModule):
         Model options.
     optimizer_options: Dict[Any, Any]
         Optimizer options.
+    sync_dist: bool
+        If reduces the metric across devices. Use with care as this may lead to
+        a significant communication overhead.
     """
 
     def __init__(
@@ -47,6 +50,7 @@ class PairBaseCV(lightning.LightningModule):
                 'gamma': 0.9997
             }
         },
+        sync_dist: bool = True,
         *args,
         **kwargs,
     ) -> None:
@@ -76,6 +80,7 @@ class PairBaseCV(lightning.LightningModule):
             **model_options
         )
 
+        self._sync_dist = sync_dist
         self._exporting_flag = False
         self._optimizer_name = 'Adam'
         self.optimizer_kwargs = {}
