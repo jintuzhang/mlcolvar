@@ -47,6 +47,9 @@ class GraphCommittor(GraphBaseCV):
         Extra loss function options.
     optimizer_options: Dict[Any, Any]
         Optimizer options.
+    sync_dist: bool
+        If reduces the metric across devices. Use with care as this may lead to
+        a significant communication overhead.
 
     References
     ----------
@@ -84,6 +87,7 @@ class GraphCommittor(GraphBaseCV):
             'exclude_boundary_in_loss_v': False
         },
         optimizer_options: Dict[Any, Any] = {},
+        sync_dist: bool = True,
         **kwargs,
     ) -> None:
         if model_options.pop('n_out', None) is not None:
@@ -130,6 +134,7 @@ class GraphCommittor(GraphBaseCV):
         self._n_bootstrap = int(
             extra_loss_options.get('n_bootstrap', 5)
         )
+        self._sync_dist = sync_dist
 
     def forward_nn(
         self,
@@ -192,21 +197,56 @@ class GraphCommittor(GraphBaseCV):
         z = self.forward_nn(batch_dict)
         q = self.sigmoid(z)
 
-        loss, loss_var, loss_bound_A, loss_bound_B = self.loss_fn(
+        loss, loss_v, loss_a, loss_b = self.loss_fn(
             batch_dict, q
         )
 
         if self.current_epoch < self._n_bootstrap:
-            loss = loss_bound_A + loss_bound_B
+            loss = loss_a + loss_b
 
         over_threshold = torch.relu(z.abs() - self._z_threshold)
-        loss_z_range = self._penalty_weight * torch.mean(over_threshold.pow(2))
+        over_threshold = over_threshold[over_threshold > 0]
+        if over_threshold.numel() > 0:
+            loss_z_range = torch.mean(over_threshold.pow(2))
+            loss_z_range = self._penalty_weight * loss_z_range
+        else:
+            loss_z_range = 0.0
         loss = loss + loss_z_range
 
         name = 'train' if self.training else 'valid'
-        self.log(f'{name}_loss', loss, on_epoch=True)
-        self.log(f'{name}_loss_variational', loss_var, on_epoch=True)
-        self.log(f'{name}_loss_boundary_A', loss_bound_A, on_epoch=True)
-        self.log(f'{name}_loss_boundary_B', loss_bound_B, on_epoch=True)
-        self.log(f'{name}_loss_z_range', loss_z_range, on_epoch=True)
+        self.log(
+            f'{name}_loss',
+            loss,
+            on_step=False,
+            on_epoch=True,
+            sync_dist=self._sync_dist,
+        )
+        self.log(
+            f'{name}_loss_variational',
+            loss_v,
+            on_step=False,
+            on_epoch=True,
+            sync_dist=self._sync_dist,
+        )
+        self.log(
+            f'{name}_loss_boundary_A',
+            loss_a,
+            on_step=False,
+            on_epoch=True,
+            sync_dist=self._sync_dist,
+        )
+        self.log(
+            f'{name}_loss_boundary_B',
+            loss_b,
+            on_step=False,
+            on_epoch=True,
+            sync_dist=self._sync_dist,
+        )
+        self.log(
+            f'{name}_loss_z_range',
+            loss_z_range,
+            on_step=False,
+            on_epoch=True,
+            sync_dist=self._sync_dist,
+        )
         return loss

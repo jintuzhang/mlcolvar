@@ -50,6 +50,9 @@ class GraphDeepTICA(GraphBaseCV):
         Extra loss function options.
     optimizer_options: Dict[Any, Any]
         Optimizer options.
+    sync_dist: bool
+        If reduces the metric across devices. Use with care as this may lead to
+        a significant communication overhead.
 
     References
     ----------
@@ -81,6 +84,7 @@ class GraphDeepTICA(GraphBaseCV):
             'mode': 'sum2', 'n_eig': 0, 'use_sigmoid': False,
         },
         optimizer_options: Dict[Any, Any] = {},
+        sync_dist: bool = True,
         **kwargs,
     ) -> None:
         if 'n_out' not in model_options.keys():
@@ -114,6 +118,8 @@ class GraphDeepTICA(GraphBaseCV):
         self.loss_fn = ReduceEigenvaluesLoss(**extra_loss_options)
 
         self.tica = TICA(n_out, n_cvs)
+
+        self._sync_dist = sync_dist
 
     def forward_nn(
         self,
@@ -219,7 +225,12 @@ class GraphDeepTICA(GraphBaseCV):
         eig_dict = {
             f'{name}_eigval_{i+1}': eigvals[i] for i in range(len(eigvals))
         }
-        self.log_dict(dict(loss_dict, **eig_dict), on_step=True, on_epoch=True)
+        self.log_dict(
+            dict(loss_dict, **eig_dict),
+            on_step=False,
+            on_epoch=True,
+            sync_dist=self._sync_dist,
+        )
         return loss
 
     def set_regularization(self, c0_reg=1e-6) -> None:
