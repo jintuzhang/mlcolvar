@@ -14,6 +14,8 @@ from mlcolvar.pairformer.core.nn.pairformer.utils import (
     flatten_final_dims,
     _attention,
     _local_attention,
+    _tri_additive_linear_attention,
+    _tri_gated_linear_attention,
     _tri_attention,
     create_local_attn_bias,
 )
@@ -157,6 +159,7 @@ class PairformerAttention(nn.Module):
         local_attention_method: Optional[str] = None,
         use_efficient_implementation: bool = False,
         zero_init_output: bool = False,
+        triangle_attention_type: str = 'torch',
     ):
         super(PairformerAttention, self).__init__()
         self.c_q = c_q
@@ -194,6 +197,13 @@ class PairformerAttention(nn.Module):
             )
             self.sigmoid = nn.Sigmoid()
 
+        # [Zichang]: SeedFold applies an output-side LayerNorm before the gating projection for additive linear triangular attention.
+        # [Zichang]: This is to guarantee the numerical stability
+        if triangle_attention_type != 'torch':
+            self.linear_triangle_output_layer_norm = PairformerLayerNorm(
+                self.c_hidden
+            )
+
     def reset_parameters(self) -> None:
         self.linear_q.reset_parameters()
         self.linear_k.reset_parameters()
@@ -216,6 +226,35 @@ class PairformerAttention(nn.Module):
         attn = softmax_no_cast(attn, -1)
         attn = torch.matmul(attn, value)
         return attn
+
+    # [Zichang]: Additive Linear Attention Implementation Follow SeedFold
+    @staticmethod
+    def _additive_linear_triangle_attention(
+        query: torch.Tensor,
+        key: torch.Tensor,
+        value: torch.Tensor,
+        biases: Optional[List[torch.Tensor]],
+    ) -> torch.Tensor:
+        phi_q = F.relu(query)
+        phi_k = F.relu(key)
+        masked_value = value
+        additive_bias = None
+
+        # [Zichang]: if mask exist, ret 1, if mask=-inf, ret 0
+        if biases is not None and len(biases) > 0:
+            key_mask = (biases[0] >= 0).to(dtype=value.dtype)
+            key_mask = key_mask.squeeze(-2).unsqueeze(-1)
+            phi_k = phi_k * key_mask
+            masked_value = masked_value * key_mask
+
+        if biases is not None and len(biases) > 1:
+            additive_bias = F.relu(biases[1])
+
+        kv_summary = torch.matmul(phi_k.transpose(-1, -2), masked_value)
+        out = torch.matmul(phi_q, kv_summary)
+        if additive_bias is not None:
+            out = out + torch.matmul(additive_bias, masked_value)
+        return out
 
     def _prep_qkv(
         self, q_x: torch.Tensor, kv_x: torch.Tensor, apply_scale: bool = True
@@ -247,6 +286,7 @@ class PairformerAttention(nn.Module):
         q_x: torch.Tensor,
         kv_x: torch.Tensor,
         biases: Optional[List[torch.Tensor]] = None,
+        triangle_attention_type: str = 'torch',
         triangle_attention: str = 'torch',
         attn_bias: Optional[torch.Tensor] = None,
         trunked_attn_bias: Optional[torch.Tensor] = None,
@@ -256,19 +296,57 @@ class PairformerAttention(nn.Module):
         inplace_safe: bool = False,
         chunk_size: Optional[int] = None,
     ) -> torch.Tensor:
-        use_triangle_path = biases is not None or triangle_attention != 'torch'
+        use_triangle_path = biases is not None or triangle_attention_type != 'torch'
         if biases is None:
             biases = []
 
-        q, k, v = self._prep_qkv(q_x=q_x, kv_x=kv_x, apply_scale=True)
+        q, k, v = self._prep_qkv(
+            q_x=q_x,
+            kv_x=kv_x,
+            apply_scale=triangle_attention_type == 'torch',
+        )
 
         if use_triangle_path:
-            assert triangle_attention in ['torch', 'triattention']
-            if triangle_attention == 'triattention':
-                o = _tri_attention(q, k, v, biases)
-            else:
-                o = self._triangle_attention(q, k, v, biases)
-                o = o.transpose(-2, -3)
+            assert triangle_attention_type in [
+                'torch',
+                'additive_linear',
+                'gated_linear',
+            ]
+            assert triangle_attention in ['torch', 'triton']
+            if triangle_attention_type == 'torch':
+                if triangle_attention == 'triton':
+                    o = _tri_attention(q, k, v, biases)
+                else:
+                    o = self._triangle_attention(q, k, v, biases)
+                    o = o.transpose(-2, -3)
+            elif triangle_attention_type == 'additive_linear':
+                if triangle_attention == 'triton':
+                    o = _tri_additive_linear_attention(q, k, v, biases)
+                else:
+                    o = self._additive_linear_triangle_attention(q, k, v, biases)
+                    o = o.transpose(-2, -3)
+                o = self.linear_triangle_output_layer_norm(o)
+            elif triangle_attention_type == 'gated_linear':
+                if triangle_attention == 'triton':
+                    o = _tri_gated_linear_attention(q, k, v, biases)
+                else:
+                    phi_q = F.relu(q)
+                    phi_k = F.relu(k)
+                    masked_value = v
+
+                    if len(biases) > 0:
+                        key_mask = (biases[0] >= 0).to(dtype=v.dtype)
+                        key_mask = key_mask.squeeze(-2).unsqueeze(-1)
+                        phi_k = phi_k * key_mask
+                        masked_value = masked_value * key_mask
+
+                    gate = torch.sigmoid(biases[1]) if len(biases) > 1 else 1.0
+                    scores = torch.matmul(
+                        phi_q, permute_final_dims(phi_k, (1, 0))
+                    )
+                    o = torch.matmul(scores * gate, masked_value)
+                    o = o.transpose(-2, -3)
+                o = self.linear_triangle_output_layer_norm(o)
             return self._wrap_up(o, q_x)
 
         if attn_bias is not None and len(attn_bias.shape) != len(q.shape):
@@ -783,7 +861,15 @@ class TriangleMultiplicativeUpdate(BaseTriangleMultiplicativeUpdate):
 
 
 class TriangleAttention(nn.Module):
-    def __init__(self, c_in, c_hidden, no_heads, starting=True, inf=1e9):
+    def __init__(
+        self,
+        c_in: int,
+        c_hidden: int,
+        no_heads: int,
+        starting: bool = True,
+        inf: float = 1e9,
+        triangle_attention_type: str = 'torch',
+    ) -> None:
         """
         Args:
             c_in:
@@ -814,6 +900,7 @@ class TriangleAttention(nn.Module):
             gating=True,
             q_bias=False,
             zero_init_output=True,
+            triangle_attention_type=triangle_attention_type,
         )
 
     def reset_parameters(self) -> None:
@@ -826,6 +913,7 @@ class TriangleAttention(nn.Module):
         x: torch.Tensor,
         biases: List[torch.Tensor],
         chunk_size: int,
+        triangle_attention_type: str = 'torch',
         triangle_attention: str = 'torch',
         inplace_safe: bool = False,
     ) -> torch.Tensor:
@@ -839,6 +927,7 @@ class TriangleAttention(nn.Module):
         return chunk_layer(
             partial(
                 self.mha,
+                triangle_attention_type=triangle_attention_type,
                 triangle_attention=triangle_attention,
             ),
             mha_inputs,
@@ -852,6 +941,7 @@ class TriangleAttention(nn.Module):
         x: torch.Tensor,
         mask: Optional[torch.Tensor] = None,
         chunk_size: Optional[int] = None,
+        triangle_attention_type: str = 'torch',
         triangle_attention: str = 'torch',
         inplace_safe: bool = False,
     ) -> torch.Tensor:
@@ -891,6 +981,7 @@ class TriangleAttention(nn.Module):
                 x,
                 biases,
                 chunk_size,
+                triangle_attention_type=triangle_attention_type,
                 triangle_attention=triangle_attention,
                 inplace_safe=inplace_safe,
             )
@@ -899,6 +990,7 @@ class TriangleAttention(nn.Module):
                 q_x=x,
                 kv_x=x,
                 biases=biases,
+                triangle_attention_type=triangle_attention_type,
                 triangle_attention=triangle_attention,
             )
 
@@ -1089,6 +1181,7 @@ class AttentionPairBias(nn.Module):
         c_z: int = 128,
         biasinit: float = -2.0,
         cross_attention_mode: bool = False,
+        triangle_attention_type: str = 'torch',
     ) -> None:
         """
         Args:
@@ -1130,6 +1223,7 @@ class AttentionPairBias(nn.Module):
             q_bias=True,
             local_attention_method=self.local_attention_method,
             zero_init_output=not self.has_s,
+            triangle_attention_type=triangle_attention_type,
         )
         self.layernorm_z = PairformerLayerNorm(
             c_z, create_offset=self.create_offset_ln_z
@@ -1319,7 +1413,8 @@ class PairformerBlock(nn.Module):
         no_heads_pair: int = 1,
         dropout: float = 0.1,
         triangle_multiplicative: Optional[str] = 'torch',
-        triangle_attention: str = 'triattention',
+        triangle_attention_type: str = 'torch',
+        triangle_attention: str = 'torch',
         pair_transition: bool = True,
     ) -> None:
         """
@@ -1334,11 +1429,29 @@ class PairformerBlock(nn.Module):
             triangle_multiplicative: Triangle multiplicative implementation type.
                 - 'torch' (default): PyTorch native implementation
                 - None: Disable triangle update
-            triangle_attention: Triangle attention implementation type.
-                - 'triattention' (default) : Optimized tri-attention module
-                - 'torch': PyTorch native implementation
+            triangle_attention_type: Triangle attention family.
+                - 'torch': Original softmax triangle attention
+                - 'additive_linear' (default): SeedFold additive linear triangle attention
+                - 'gated_linear': SeedFold gated linear triangle attention
+            triangle_attention: Triangle attention backend.
+                - 'torch': PyTorch implementation
+                - 'triton' (default): Triton kernel where supported
         """
         super(PairformerBlock, self).__init__()
+        if triangle_attention_type not in [
+            'torch',
+            'additive_linear',
+            'gated_linear',
+        ]:
+            raise ValueError(
+                'triangle_attention_type must be "torch", '
+                f'"additive_linear", or "gated_linear", but got {triangle_attention_type}'
+            )
+        if triangle_attention not in ['triton', 'torch']:
+            raise ValueError(
+                'triangle_attention must be "triton" or "torch", '
+                f'but got {triangle_attention}'
+            )
         self.n_heads = n_heads
         if triangle_multiplicative is not None:
             self.tri_mul_out = TriangleMultiplicationOutgoing(
@@ -1351,11 +1464,13 @@ class PairformerBlock(nn.Module):
             c_in=c_z,
             c_hidden=c_hidden_pair_att,
             no_heads=no_heads_pair,
+            triangle_attention_type=triangle_attention_type,
         )
         self.tri_att_end = TriangleAttention(
             c_in=c_z,
             c_hidden=c_hidden_pair_att,
             no_heads=no_heads_pair,
+            triangle_attention_type=triangle_attention_type,
         )
         self.dropout_row = DropoutRowwise(dropout)
         if pair_transition:
@@ -1370,9 +1485,11 @@ class PairformerBlock(nn.Module):
                 n_heads=n_heads,
                 c_a=c_s,
                 c_z=c_z,
+                triangle_attention_type=triangle_attention_type,
             )
             self.single_transition = Transition(c_in=c_s, n=4)
         self._triangle_multiplicative = triangle_multiplicative
+        self._triangle_attention_type = triangle_attention_type
         self._triangle_attention = triangle_attention
 
     def reset_parameters(self) -> None:
@@ -1432,6 +1549,7 @@ class PairformerBlock(nn.Module):
             z += self.tri_att_start(
                 z,
                 mask=pair_mask,
+                triangle_attention_type=self._triangle_attention_type,
                 triangle_attention=self._triangle_attention,
                 inplace_safe=inplace_safe,
                 chunk_size=chunk_size,
@@ -1446,6 +1564,7 @@ class PairformerBlock(nn.Module):
                     if pair_mask is not None
                     else None
                 ),
+                triangle_attention_type=self._triangle_attention_type,
                 triangle_attention=self._triangle_attention,
                 inplace_safe=inplace_safe,
                 chunk_size=chunk_size,
@@ -1479,6 +1598,7 @@ class PairformerBlock(nn.Module):
                 self.tri_att_start(
                     z,
                     mask=pair_mask,
+                    triangle_attention_type=self._triangle_attention_type,
                     triangle_attention=self._triangle_attention,
                     inplace_safe=inplace_safe,
                     chunk_size=chunk_size,
@@ -1493,6 +1613,7 @@ class PairformerBlock(nn.Module):
                         if pair_mask is not None
                         else None
                     ),
+                    triangle_attention_type=self._triangle_attention_type,
                     triangle_attention=self._triangle_attention,
                     inplace_safe=inplace_safe,
                     chunk_size=chunk_size,
@@ -1559,6 +1680,40 @@ def test_pairformer_block() -> None:
         )
     ) < 1E-14).all()
 
+    pairformer_additive = PairformerBlock(
+        n_heads=1,
+        c_z=2,
+        c_s=0,
+        c_hidden_mul=16,
+        c_hidden_pair_att=16,
+        no_heads_pair=1,
+        triangle_attention_type='additive_linear',
+        triangle_attention='torch',
+    ).eval().to(torch.float64)
+
+    _, additive_outputs = pairformer_additive(
+        s=None, z=pair.clone(), pair_mask=mask
+    )
+    assert additive_outputs.shape == pair.shape
+    assert torch.isfinite(additive_outputs).all()
+
+    pairformer_gated = PairformerBlock(
+        n_heads=1,
+        c_z=2,
+        c_s=0,
+        c_hidden_mul=16,
+        c_hidden_pair_att=16,
+        no_heads_pair=1,
+        triangle_attention_type='gated_linear',
+        triangle_attention='torch',
+    ).eval().to(torch.float64)
+
+    _, gated_outputs = pairformer_gated(
+        s=None, z=pair.clone(), pair_mask=mask
+    )
+    assert gated_outputs.shape == pair.shape
+    assert torch.isfinite(gated_outputs).all()
+
     if TRITON_AVAILABLE:
 
         import triton
@@ -1578,7 +1733,7 @@ def test_pairformer_block() -> None:
             c_hidden_mul=64,
             c_hidden_pair_att=64,
             no_heads_pair=1,
-            triangle_attention='triattention',
+            triangle_attention='triton',
         ).eval().to(dtype).to('cuda')
 
         pairformer_2 = PairformerBlock(

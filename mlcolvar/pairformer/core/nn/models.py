@@ -218,11 +218,16 @@ class PairFormerModel(BaseModel):
     drop_rate: float
         Drop probability in all dropout layers.
     triangle_attention: str
-        Type of the triangle attention implementation. Valid options are:
-        - 'triattention': Optimized tri-attention module
+        Type of the triangle attention backends. Valid options are:
         - 'torch': PyTorch native implementation
+        - 'triton': Optimized tri-attention module
         Note that when applying the model in Committor tasks, this option HAS
         to be 'torch'.
+    triangle_attention_type: str
+        Type of the triangle attention family. Valid options are:
+        - 'torch': Original softmax triangle attention
+        - 'additive_linear': SeedFold [2] additive linear triangle attention
+        - 'gated_linear': SeedFold [2] gated linear triangle attention
     triangle_multiplicative: Triangle multiplicative implementation type.
         - 'torch': PyTorch native implementation
         - None: Disable triangle update
@@ -236,6 +241,8 @@ class PairFormerModel(BaseModel):
     .. [1] Abramson, Josh, et al. "Accurate structure prediction of
         biomolecular interactions with AlphaFold 3."
         Nature 630.8016 (2024): 493-500.
+    .. [2] Zhou, Yi, et al. "SeedFold: Scaling biomolecular structure
+        prediction." arXiv preprint arXiv:2512.24354 (2025).
     """
 
     def __init__(
@@ -253,6 +260,7 @@ class PairFormerModel(BaseModel):
         n_hidden_channels_pair: int = 16,
         drop_rate: float = 0.0,
         triangle_attention: str = 'torch',
+        triangle_attention_type: str = 'torch',
         triangle_multiplicative: str = 'torch',
         pair_transition: bool = True,
         n_polynomials: int = 0,
@@ -297,6 +305,7 @@ class PairFormerModel(BaseModel):
                 dropout=drop_rate,
                 triangle_multiplicative=triangle_multiplicative,
                 triangle_attention=triangle_attention,
+                triangle_attention_type=triangle_attention_type,
                 pair_transition=pair_transition,
             ) for _ in range(n_layers)
         ])
