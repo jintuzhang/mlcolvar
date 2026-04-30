@@ -220,6 +220,7 @@ class GraphCommittor(GraphBaseCV):
             on_step=False,
             on_epoch=True,
             sync_dist=self._sync_dist,
+            batch_size=z.shape[0],
         )
         self.log(
             f'{name}_loss_variational',
@@ -227,6 +228,7 @@ class GraphCommittor(GraphBaseCV):
             on_step=False,
             on_epoch=True,
             sync_dist=self._sync_dist,
+            batch_size=z.shape[0],
         )
         self.log(
             f'{name}_loss_boundary_A',
@@ -234,6 +236,7 @@ class GraphCommittor(GraphBaseCV):
             on_step=False,
             on_epoch=True,
             sync_dist=self._sync_dist,
+            batch_size=z.shape[0],
         )
         self.log(
             f'{name}_loss_boundary_B',
@@ -241,6 +244,7 @@ class GraphCommittor(GraphBaseCV):
             on_step=False,
             on_epoch=True,
             sync_dist=self._sync_dist,
+            batch_size=z.shape[0],
         )
         self.log(
             f'{name}_loss_z_range',
@@ -248,5 +252,6 @@ class GraphCommittor(GraphBaseCV):
             on_step=False,
             on_epoch=True,
             sync_dist=self._sync_dist,
+            batch_size=z.shape[0],
         )
         return loss
