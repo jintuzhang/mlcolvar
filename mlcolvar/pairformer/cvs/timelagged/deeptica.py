@@ -223,6 +223,7 @@ class PairDeepTICA(PairBaseCV):
             on_step=False,
             on_epoch=True,
             sync_dist=self._sync_dist,
+            batch_size=nn_outputs_t.shape[0],
         )
         return loss
 

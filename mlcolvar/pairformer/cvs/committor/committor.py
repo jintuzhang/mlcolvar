@@ -221,6 +221,7 @@ class PairCommittor(PairBaseCV):
             on_step=False,
             on_epoch=True,
             sync_dist=self._sync_dist,
+            batch_size=z.shape[0],
         )
         self.log(
             f'{name}_loss_variational',
@@ -228,6 +229,7 @@ class PairCommittor(PairBaseCV):
             on_step=False,
             on_epoch=True,
             sync_dist=self._sync_dist,
+            batch_size=z.shape[0],
         )
         self.log(
             f'{name}_loss_boundary_A',
@@ -235,6 +237,7 @@ class PairCommittor(PairBaseCV):
             on_step=False,
             on_epoch=True,
             sync_dist=self._sync_dist,
+            batch_size=z.shape[0],
         )
         self.log(
             f'{name}_loss_boundary_B',
@@ -242,6 +245,7 @@ class PairCommittor(PairBaseCV):
             on_step=False,
             on_epoch=True,
             sync_dist=self._sync_dist,
+            batch_size=z.shape[0],
         )
         self.log(
             f'{name}_loss_z_range',
@@ -249,6 +253,7 @@ class PairCommittor(PairBaseCV):
             on_step=False,
             on_epoch=True,
             sync_dist=self._sync_dist,
+            batch_size=z.shape[0],
         )
         return loss
 

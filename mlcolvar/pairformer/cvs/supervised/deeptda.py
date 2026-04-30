@@ -161,6 +161,7 @@ class PairDeepTDA(PairBaseCV):
             on_step=False,
             on_epoch=True,
             sync_dist=self._sync_dist,
+            batch_size=output.shape[0],
         )
         self.log(
             f'{name}_loss_centers',
@@ -168,6 +169,7 @@ class PairDeepTDA(PairBaseCV):
             on_step=False,
             on_epoch=True,
             sync_dist=self._sync_dist,
+            batch_size=output.shape[0],
         )
         self.log(
             f'{name}_loss_sigmas',
@@ -175,6 +177,7 @@ class PairDeepTDA(PairBaseCV):
             on_step=False,
             on_epoch=True,
             sync_dist=self._sync_dist,
+            batch_size=output.shape[0],
         )
         self.log(
             f'{name}_loss_ortho',
@@ -182,6 +185,7 @@ class PairDeepTDA(PairBaseCV):
             on_step=False,
             on_epoch=True,
             sync_dist=self._sync_dist,
+            batch_size=output.shape[0],
         )
         return loss
 
