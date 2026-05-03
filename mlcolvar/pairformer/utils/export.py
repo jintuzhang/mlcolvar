@@ -130,6 +130,7 @@ class ExportableCommittor(torch.nn.Module):
         kb_epsilon: float = 1E-14,
         kb_lambda: float = -1.0,
         kb_truncated: bool = False,
+        kb_truncated_cos: bool = False,
         kb_weighted: bool = False,
     ) -> None:
 
@@ -138,6 +139,7 @@ class ExportableCommittor(torch.nn.Module):
         self._calculate_gradients = calculate_gradients
         self._calculate_k_bias = calculate_k_bias
         self._kb_truncated = kb_truncated
+        self._kb_truncated_cos = kb_truncated_cos
         self._kb_weighted = kb_weighted
         self._kb_epsilon = torch.tensor(
             kb_epsilon, dtype=torch.get_default_dtype()
@@ -212,6 +214,8 @@ class ExportableCommittor(torch.nn.Module):
                 )
                 - torch.log(epsilon)
             )
+        if self._kb_truncated_cos:
+            k_bias_value = k_bias_value * torch.cos((q - 0.5) * torch.pi) ** 2
 
         gradients_b = torch.autograd.grad(
             [k_bias_value],
@@ -571,12 +575,18 @@ def _regularize_k_bias_options(
         'kb_epsilon': 1E-14 if model.dtype == torch.float64 else 1E-7,
         'kb_lambda': -1.0,
         'kb_truncated': False,
+        'kb_truncated_cos': False,
         'kb_weighted': False,
     }
 
     if k_bias_options is not None:
         for k in k_bias_options.keys():
-            if k in ['calculate_k_bias', 'kb_truncated', 'kb_weighted']:
+            if k in [
+                'calculate_k_bias',
+                'kb_truncated',
+                'kb_weighted',
+                'kb_truncated_cos'
+            ]:
                 results[k] = bool(k_bias_options[k])
             if k in ['kb_epsilon', 'kb_lambda']:
                 results[k] = float(k_bias_options[k])
@@ -684,6 +694,9 @@ def export(
             The lambda value for calculating the Kolmogorov bias.
         - 'kb_truncated': False,
             If calculate the truncated (twisted) Kolmogorov bias.
+        - 'kb_truncated_cos': False,
+            If calculate the truncated (twisted) Kolmogorov bias using a cosine
+            cutoff function.
         - 'kb_weighted': False,
             If calculate the mass-weighted (exact) Kolmogorov bias.
     n_atoms_padded: int
