@@ -9,74 +9,11 @@ https://github.com/ACEsuit/mace/blob/main/mace/tools/scatter.py
 
 __all__ = [
     'set_default_dtype',
-    'get_edge_vectors_and_lengths',
-    'get_edge_vectors_and_lengths_2',
     'get_centers',
-    'get_shifts',
-    'get_mic_distances',
-    'get_mic_distances_2',
+    'get_distances',
     'scatter_sum',
     'scatter_mean',
-    'ptr_to_edge_index_fc',
 ]
-
-
-def get_edge_vectors_and_lengths(
-    positions: torch.Tensor,
-    edge_index: torch.Tensor,
-    shifts: torch.Tensor,
-    normalize: bool = True,
-    eps: float = 0.0,
-) -> Tuple[torch.Tensor, torch.Tensor]:
-    """
-    Calculate edge vectors and lengths by indices and shift vectors.
-
-    Parameters
-    ----------
-    position: torch.Tensor (shape: [n_atoms, 3])
-        The position vector.
-    edge_index: torch.Tensor (shape: [2, n_edges])
-        The edge indices.
-    shifts: torch.Tensor (shape: [n_edges, 3])
-        The shift vector.
-    normalize: bool
-        If return the normalized distance vectors.
-
-    Returns
-    -------
-    vectors: torch.Tensor (shape: [n_edges, 3])
-        The distance vectors.
-    lengths: torch.Tensor (shape: [n_edges, 1])
-        The edge lengths.
-    """
-    sender = edge_index[0]
-    receiver = edge_index[1]
-    vectors = positions[receiver] - positions[sender] + shifts + eps
-    lengths = torch.linalg.norm(vectors, dim=-1, keepdim=True)  # [n_edges, 1]
-
-    if normalize:
-        vectors = torch.nan_to_num(torch.div(vectors, lengths))
-
-    return vectors, lengths
-
-
-def get_edge_vectors_and_lengths_2(
-    positions_1: torch.Tensor,
-    positions_2: torch.Tensor,
-    edge_index: torch.Tensor,
-    shifts: torch.Tensor,
-    normalize: bool = True,
-    eps: float = 0.0,
-) -> Tuple[torch.Tensor, torch.Tensor]:
-    sender = edge_index[0]
-    receiver = edge_index[1]
-    vectors = positions_2[receiver] - positions_1[sender] + shifts + eps
-    lengths = torch.linalg.norm(vectors, dim=-1, keepdim=True)  # [n_edges, 1]
-
-    if normalize:
-        vectors = torch.nan_to_num(torch.div(vectors, lengths))
-
-    return vectors, lengths
 
 
 def get_centers(
@@ -120,112 +57,64 @@ def get_centers(
     return centers
 
 
-@torch.jit.script
-def get_shifts(
-    positions: torch.Tensor,
-    edge_index: torch.Tensor,
-    cells: torch.Tensor,
-    n_atoms: torch.Tensor,
-    n_edges: torch.Tensor,
-) -> Tuple[torch.Tensor, torch.Tensor]:
-    cells_inv = torch.linalg.pinv(cells.transpose(2, 1))
-    cells_inv_nodes = torch.repeat_interleave(cells_inv, n_atoms, dim=0)
-    cells_edges = torch.repeat_interleave(
-        cells.transpose(2, 1), n_edges, dim=0
-    )
-
-    positions_s = torch.einsum('bi,bij->bj', positions, cells_inv_nodes)
-    deltas = positions_s[edge_index[0]] - positions_s[edge_index[1]]
-    unit_shifts = torch.round(deltas)
-    shifts = torch.einsum('bi,bij->bj', unit_shifts, cells_edges)
-
-    return (shifts, unit_shifts)
-
-
-@torch.jit.script
-def get_mic_distances(
-    positions: torch.Tensor,
-    edge_index: torch.Tensor,
-    cells: torch.Tensor,
-    n_edges: torch.Tensor,
-    normalize: bool = True,
-    eps: float = 0.0,
-) -> Tuple[torch.Tensor, torch.Tensor]:
-    cells_inv = torch.linalg.pinv(cells.transpose(2, 1))
-    cells_inv_nodes = torch.repeat_interleave(cells_inv, n_edges, dim=0)
-    cells_nodes = torch.repeat_interleave(
-        cells.transpose(2, 1), n_edges, dim=0
-    )
-
-    positions_1 = positions[edge_index[0]]
-    positions_2 = positions[edge_index[1]]
-    positions_1_s = torch.einsum('bi,bij->bj', positions_1, cells_inv_nodes)
-    positions_2_s = torch.einsum('bi,bij->bj', positions_2, cells_inv_nodes)
-    deltas = positions_1_s - positions_2_s
-    unit_shifts = torch.round(deltas)
-    shifts = torch.einsum('bi,bij->bj', unit_shifts, cells_nodes)
-
-    vectors = positions_2 - positions_1 + shifts + eps
-    lengths = torch.linalg.norm(vectors, dim=-1, keepdim=True)
-
-    if normalize:
-        vectors = torch.nan_to_num(torch.div(vectors, lengths))
-
-    return vectors, lengths
-
-
-def get_mic_distances_2(
+def get_distances(
     positions_1: torch.Tensor,
     positions_2: torch.Tensor,
-    edge_index: torch.Tensor,
     cells: torch.Tensor,
-    n_edges: torch.Tensor,
+    n_graphs: int,
     normalize: bool = True,
     eps: float = 0.0,
+    is_orthogonal: bool = False,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
-    cells_inv = torch.linalg.pinv(cells.transpose(2, 1))
-    cells_inv_nodes = torch.repeat_interleave(cells_inv, n_edges, dim=0)
-    cells_nodes = torch.repeat_interleave(
-        cells.transpose(2, 1), n_edges, dim=0
+
+    s_1 = positions_1.shape[0] // n_graphs
+    s_2 = positions_2.shape[0] // n_graphs
+
+    positions_1_ = torch.repeat_interleave(
+        positions_1, s_2, dim=0
+    )
+    positions_2_ = torch.repeat_interleave(
+        positions_2.reshape(n_graphs, s_2, 3), s_1, dim=0
+    ).reshape(
+        s_1 * s_2 * n_graphs, 3
     )
 
-    positions_1 = positions_1[edge_index[0]]
-    positions_2 = positions_2[edge_index[1]]
-    positions_1_s = torch.einsum('bi,bij->bj', positions_1, cells_inv_nodes)
-    positions_2_s = torch.einsum('bi,bij->bj', positions_2, cells_inv_nodes)
-    deltas = positions_1_s - positions_2_s
-    unit_shifts = torch.round(deltas)
-    shifts = torch.einsum('bi,bij->bj', unit_shifts, cells_nodes)
+    vectors = positions_2_ - positions_1_
 
-    vectors = positions_2 - positions_1 + shifts + eps
-    lengths = torch.linalg.norm(vectors, dim=-1, keepdim=True)
+    if cells.shape[1] == 3:
+
+        cells = cells.reshape(n_graphs, 3, 3)
+        cells_nodes = torch.repeat_interleave(
+            cells.transpose(2, 1), s_1 * s_2, dim=0
+        )
+
+        if is_orthogonal:
+            reciprocal = 1.0 / torch.diagonal(cells, dim1=-2, dim2=-1)
+            cells_inv = torch.diag_embed(reciprocal)
+        else:
+            cells_inv = torch.linalg.pinv(cells.transpose(2, 1))
+        cells_inv_nodes = torch.repeat_interleave(
+            cells_inv, s_1 * s_2, dim=0
+        )
+
+        positions_1_s = torch.einsum(
+            'bi,bij->bj', positions_1_, cells_inv_nodes
+        )
+        positions_2_s = torch.einsum(
+            'bi,bij->bj', positions_2_, cells_inv_nodes
+        )
+        deltas = positions_1_s - positions_2_s
+        unit_shifts = torch.round(deltas)
+        shifts = torch.einsum('bi,bij->bj', unit_shifts, cells_nodes)
+
+        vectors = vectors + shifts
+
+    lengths = torch.linalg.norm(vectors + eps, dim=-1, keepdim=True)
 
     if normalize:
         vectors = torch.nan_to_num(torch.div(vectors, lengths))
 
     return vectors, lengths
-
-
-def ptr_to_edge_index_fc(
-    ptr: torch.Tensor, n_nodes_max: Optional[int] = None
-) -> torch.Tensor:
-
-    ptr = ptr.long().flatten()
-
-    edge_list = []
-    for i in range(ptr.numel() - 1):
-        start = int(ptr[i].item())
-        end = int(ptr[i+1].item())
-        n_nodes = end - start
-        idx = torch.arange(start, end, dtype=torch.long, device=ptr.device)
-        src = idx.repeat_interleave(n_nodes)
-        dst = idx.repeat(n_nodes)
-        block = torch.stack([src, dst], dim=0)
-        edge_list.append(block)
-
-    edge_index = torch.cat(edge_list, dim=1)
-
-    return edge_index
 
 
 def set_default_dtype(dtype: str) -> None:
@@ -352,86 +241,6 @@ def scatter_mean(
     return out
 
 
-def test_get_edge_vectors_and_lengths() -> None:
-    dtype = torch.get_default_dtype()
-    torch.set_default_dtype(torch.float64)
-
-    data = dict()
-    data['positions'] = torch.tensor(
-        [[0.0, 0.0, 0.0], [0.07, 0.07, 0.0], [0.07, -0.07, 0.0]],
-        dtype=torch.float64
-    )
-    data['edge_index'] = torch.tensor(
-        [[0, 0, 1, 1, 2, 2], [2, 1, 0, 2, 1, 0]]
-    )
-    data['shifts'] = torch.tensor([
-        [0.0, 0.0, 0.0],
-        [0.0, 0.0, 0.0],
-        [0.0, 0.0, 0.0],
-        [0.0, 0.2, 0.0],
-        [0.0, -0.2, 0.0],
-        [0.0, 0.0, 0.0],
-    ])
-
-    vectors, distances = get_edge_vectors_and_lengths(**data, normalize=False)
-    assert (
-        torch.abs(
-            vectors
-            - torch.tensor([
-                [0.0700, -0.0700, 0.0000],
-                [0.0700,  0.0700, 0.0000],
-                [-0.070, -0.0700, 0.0000],
-                [0.0000,  0.0600, 0.0000],
-                [0.0000, -0.0600, 0.0000],
-                [-0.070,  0.0700, 0.0000]
-            ])
-        ) < 1E-12
-    ).all()
-    assert (
-        torch.abs(
-            distances
-            - torch.tensor([
-                [0.09899494936611666],
-                [0.09899494936611666],
-                [0.09899494936611666],
-                [0.06000000000000000],
-                [0.06000000000000000],
-                [0.09899494936611666],
-            ])
-        ) < 1E-12
-    ).all()
-
-    vectors, distances = get_edge_vectors_and_lengths(**data, normalize=True)
-    assert (
-        torch.abs(
-            vectors
-            - torch.tensor([
-                [0.70710678118654757, -0.70710678118654757, 0.0],
-                [0.70710678118654757,  0.70710678118654757, 0.0],
-                [-0.7071067811865476, -0.70710678118654757, 0.0],
-                [0.00000000000000000,  1.00000000000000000, 0.0],
-                [0.00000000000000000, -1.00000000000000000, 0.0],
-                [-0.7071067811865476,  0.70710678118654757, 0.0],
-            ])
-        ) < 1E-12
-    ).all()
-    assert (
-        torch.abs(
-            distances
-            - torch.tensor([
-                [0.09899494936611666],
-                [0.09899494936611666],
-                [0.09899494936611666],
-                [0.06000000000000000],
-                [0.06000000000000000],
-                [0.09899494936611666],
-            ])
-        ) < 1E-12
-    ).all()
-
-    torch.set_default_dtype(dtype)
-
-
 def test_get_centers() -> None:
     dtype = torch.get_default_dtype()
     torch.set_default_dtype(torch.float64)
@@ -493,100 +302,46 @@ def test_get_centers() -> None:
     torch.set_default_dtype(dtype)
 
 
-def test_get_shifts_and_mic_distances() -> None:
+def test_get_distances() -> None:
     dtype = torch.get_default_dtype()
     torch.set_default_dtype(torch.float64)
 
-    positions = torch.tensor([
-        [0.0, 0.0, 0.0], [0.07, 0.07, 0.0], [0.07, -0.07, 0.0],
-        [0.0, 0.0, 0.0], [0.07, 0.07, 0.0], [0.07, -0.07, 0.0],
-        [0.0, 0.0, 0.0], [0.07, 0.07, 0.0], [0.07, -0.07, 0.0],
-        [0.0, 0.0, 0.9], [0.07, 0.08, 0.9], [0.07, -0.07, 0.9],
+    positions_1 = torch.zeros((4, 3))
+    positions_2 = torch.ones((6, 3))
+    cells = torch.concat([
+        torch.eye(3) * 0.2,
+        torch.eye(3) * 1.1,
     ])
-    edge_index = torch.tensor([
-        [0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 8, 9, 9, 10, 11, 6, 9],
-        [2, 1, 0, 2, 1, 0, 5, 4, 3, 5, 4, 3, 8, 7, 6, 6, 11, 10, 9, 9, 9, 6],
-    ])
-    cells = torch.stack([
-        torch.eye(3) * 0.2, torch.eye(3) * 0.2, torch.eye(3) * 1.1
-    ])
-    n_atoms = torch.tensor([3, 3, 6])
-    n_edges = torch.tensor([6, 6, 10])
 
-    shifts, unit_shifts = get_shifts(
-        positions, edge_index, cells, n_atoms, n_edges
-    )
-
+    out = get_distances(positions_1, positions_2, cells, 2)
     assert (
-        shifts == torch.tensor([
-            [0.0, 0.0, 0.0],
-            [0.0, 0.0, 0.0],
-            [0.0, 0.0, 0.0],
-            [0.0, 0.2, 0.0],
-            [0.0, -0.2, 0.0],
-            [0.0, 0.0, 0.0],
-            [0.0, 0.0, 0.0],
-            [0.0, 0.0, 0.0],
-            [0.0, 0.0, 0.0],
-            [0.0, 0.2, 0.0],
-            [0.0, -0.2, 0.0],
-            [0.0, 0.0, 0.0],
-            [0.0, 0.0, 0.0],
-            [0.0, 0.0, 0.0],
-            [0.0, 0.0, 0.0],
-            [0.0, 0.0, 0.0],
-            [0.0, 0.0, 0.0],
-            [0.0, 0.0, 0.0],
-            [0.0, 0.0, 0.0],
-            [0.0, 0.0, 0.0],
-            [0.0, 0.0, -1.1],
-            [0.0, 0.0, 1.1],
-        ])
-    ).all()
-    assert (
-        unit_shifts == torch.tensor([
-            [0.0, 0.0, 0.0],
-            [0.0, 0.0, 0.0],
-            [0.0, 0.0, 0.0],
-            [0.0, 1.0, 0.0],
-            [0.0, -1.0, 0.0],
-            [0.0, 0.0, 0.0],
-            [0.0, 0.0, 0.0],
-            [0.0, 0.0, 0.0],
-            [0.0, 0.0, 0.0],
-            [0.0, 1.0, 0.0],
-            [0.0, -1.0, 0.0],
-            [0.0, 0.0, 0.0],
-            [0.0, 0.0, 0.0],
-            [0.0, 0.0, 0.0],
-            [0.0, 0.0, 0.0],
-            [0.0, 0.0, 0.0],
-            [0.0, 0.0, 0.0],
-            [0.0, 0.0, 0.0],
-            [0.0, 0.0, 0.0],
-            [0.0, 0.0, 0.0],
-            [0.0, 0.0, -1.0],
-            [0.0, 0.0, 1.0],
-        ])
+        out[1] - torch.tensor(
+            [[0] * 6 + [torch.sqrt(torch.tensor(3.))] * 6],
+        ).T < 1E-12
     ).all()
 
-    distances, _ = get_mic_distances(
-        positions, edge_index, cells, n_edges, False, eps=0.0,
-    )
-    distances_ref, _ = get_edge_vectors_and_lengths(
-        positions, edge_index, shifts, False
-    )
-    assert (distances == distances_ref).all()
+    cells = torch.zeros(2, 1)
+    assert (
+        out[1] - torch.tensor([[torch.sqrt(torch.tensor(3.))] * 12]).T < 1E-12
+    ).all()
 
-    distances, _ = get_mic_distances_2(
-        positions, positions, edge_index, cells, n_edges, False, eps=0.0,
+    positions = torch.tensor(
+        [[0.0, 0.0, 0.0], [0.07, 0.07, 0.0], [0.07, -0.07, 0.0]],
+        dtype=torch.float64
     )
-    assert (distances == distances_ref).all()
-
-    distances, _ = get_edge_vectors_and_lengths_2(
-        positions, positions, edge_index, shifts, False
-    )
-    assert (distances == distances_ref).all()
+    cells = torch.eye(3) * 0.2
+    out = get_distances(positions, positions, cells, 1)
+    assert ((
+        out[1][[1, 2, 3, 5, 6, 7]]
+        - torch.tensor([
+            [0.09899494936611666],
+            [0.09899494936611666],
+            [0.09899494936611666],
+            [0.06000000000000000],
+            [0.09899494936611666],
+            [0.06000000000000000],
+        ])
+    ) < 1E-12).all()
 
     torch.set_default_dtype(dtype)
 
@@ -632,7 +387,6 @@ def test_scatter() -> None:
 
 if __name__ == '__main__':
     test_get_centers()
-    test_get_edge_vectors_and_lengths()
-    test_get_shifts_and_mic_distances()
+    test_get_distances()
     test_set_default_dtype()
     test_scatter()

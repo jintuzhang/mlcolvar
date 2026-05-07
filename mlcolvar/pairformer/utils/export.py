@@ -267,97 +267,6 @@ def _scatter_mean_static(
     return torch.mean(src, dim=dim, keepdim=True)
 
 
-def _get_mic_distances_static(
-    positions: torch.Tensor,
-    edge_index: torch.Tensor,
-    cells: torch.Tensor,
-    n_edges: torch.Tensor,
-    normalize: bool = True,
-    eps: float = 1E-15,
-    is_orthogonal: bool = False,
-) -> Tuple[torch.Tensor, torch.Tensor]:
-
-    n_edges = edge_index.shape[1]
-    if is_orthogonal:
-        reciprocal = 1.0 / torch.diagonal(cells, dim1=-2, dim2=-1)
-        cells_inv = torch.diag_embed(reciprocal)
-    else:
-        cells_inv = torch.linalg.pinv(cells.transpose(2, 1))
-    cells_inv_nodes = torch.repeat_interleave(cells_inv, n_edges, dim=0)
-    cells_nodes = torch.repeat_interleave(
-        cells.transpose(2, 1), n_edges, dim=0
-    )
-
-    positions_1 = positions[edge_index[0]]
-    positions_2 = positions[edge_index[1]]
-    positions_1_s = torch.einsum('bi,bij->bj', positions_1, cells_inv_nodes)
-    positions_2_s = torch.einsum('bi,bij->bj', positions_2, cells_inv_nodes)
-    deltas = positions_1_s - positions_2_s
-    unit_shifts = torch.round(deltas)
-    shifts = torch.einsum('bi,bij->bj', unit_shifts, cells_nodes)
-
-    vectors = positions_2 - positions_1 + shifts + eps
-    lengths = torch.linalg.norm(vectors, dim=-1, keepdim=True)
-
-    if normalize:
-        vectors = torch.nan_to_num(torch.div(vectors, lengths))
-
-    return vectors, lengths
-
-
-def _get_mic_distances_2_static(
-    positions_1: torch.Tensor,
-    positions_2: torch.Tensor,
-    edge_index: torch.Tensor,
-    cells: torch.Tensor,
-    n_edges: torch.Tensor,
-    normalize: bool = True,
-    eps: float = 0.0,
-    is_orthogonal: bool = False,
-) -> Tuple[torch.Tensor, torch.Tensor]:
-
-    if is_orthogonal:
-        reciprocal = 1.0 / torch.diagonal(cells, dim1=-2, dim2=-1)
-        cells_inv = torch.diag_embed(reciprocal)
-    else:
-        cells_inv = torch.linalg.pinv(cells.transpose(2, 1))
-    cells_inv_nodes = torch.repeat_interleave(cells_inv, n_edges, dim=0)
-    cells_nodes = torch.repeat_interleave(
-        cells.transpose(2, 1), n_edges, dim=0
-    )
-
-    positions_1 = positions_1[edge_index[0]]
-    positions_2 = positions_2[edge_index[1]]
-    positions_1_s = torch.einsum('bi,bij->bj', positions_1, cells_inv_nodes)
-    positions_2_s = torch.einsum('bi,bij->bj', positions_2, cells_inv_nodes)
-    deltas = positions_1_s - positions_2_s
-    unit_shifts = torch.round(deltas)
-    shifts = torch.einsum('bi,bij->bj', unit_shifts, cells_nodes)
-
-    vectors = positions_2 - positions_1 + shifts + eps
-    lengths = torch.linalg.norm(vectors, dim=-1, keepdim=True)
-
-    if normalize:
-        vectors = torch.nan_to_num(torch.div(vectors, lengths))
-
-    return vectors, lengths
-
-
-
-def _ptr_to_edge_index_fc_static(
-    ptr: torch.Tensor, n_nodes_max: int = None
-) -> torch.Tensor:
-
-    ptr = ptr.long().flatten()
-
-    idx = torch.arange(n_nodes_max, dtype=torch.long, device=ptr.device)
-    src = idx.repeat_interleave(n_nodes_max)
-    dst = idx.repeat(n_nodes_max)
-    block = torch.stack([src, dst], dim=0)
-
-    return block
-
-
 def _set_check_dtype_device_cxx(
     model: LightningModule,
 ) -> LightningModule:
@@ -796,14 +705,8 @@ def export(
     model._exporting = True
     scatter_sum = torch_tools.scatter_sum
     scatter_mean = torch_tools.scatter_mean
-    get_mic_distances = torch_tools.get_mic_distances
-    get_mic_distances_2 = torch_tools.get_mic_distances_2
-    ptr_to_edge_index_fc = torch_tools.ptr_to_edge_index_fc
     torch_tools.scatter_sum = _scatter_sum_static
     torch_tools.scatter_mean = _scatter_mean_static
-    torch_tools.get_mic_distances = _get_mic_distances_static
-    torch_tools.get_mic_distances_2 = _get_mic_distances_2_static
-    torch_tools.ptr_to_edge_index_fc = _ptr_to_edge_index_fc_static
 
     cell = example_inputs['cell']
     if cell.shape[1] == 3 and check_is_orthogonal:
@@ -811,11 +714,8 @@ def export(
         off_diag = example_inputs['cell'][~mask]
         is_orthogonal = off_diag.abs().max() < 1E-7
         if is_orthogonal:
-            torch_tools.get_mic_distances = functools.partial(
-                _get_mic_distances_static, is_orthogonal=True
-            )
-            torch_tools.get_mic_distances_2 = functools.partial(
-                _get_mic_distances_2_static, is_orthogonal=True
+            torch_tools.get_distances = functools.partial(
+                torch_tools.get_distances, is_orthogonal=True
             )
             warnings.warn(
                 'Fast inv method is enabled. Make sure that your simulation '
@@ -865,11 +765,11 @@ def export(
     _update_package_metadata(file_name, metadata)
     _check_exported_model_outputs(file_name, exportable, inputs)
 
+    torch_tools.get_distances = functools.partial(
+        torch_tools.get_distances, is_orthogonal=False
+    )
     torch_tools.scatter_sum = scatter_sum
     torch_tools.scatter_mean = scatter_mean
-    torch_tools.get_mic_distances = get_mic_distances
-    torch_tools.get_mic_distances_2 = get_mic_distances_2
-    torch_tools.ptr_to_edge_index_fc = ptr_to_edge_index_fc
     model._exporting = False
 
     return output_path

@@ -2,7 +2,7 @@ import torch
 from torch import nn
 import numpy as np
 import torch_geometric as tg
-from typing import List, Dict, Optional, Any, Tuple, Union, Union
+from typing import List, Dict, Optional, Any, Tuple, Union
 
 from mlcolvar.pairformer import data as pdata
 from mlcolvar.pairformer.core.nn import radial
@@ -145,30 +145,14 @@ class FFNNModel(BaseModel):
 
         node_attrs = node_attrs.reshape(n_graphs, n_atoms, node_attrs.shape[1])
 
-        edge_index_fc = torch_tools.ptr_to_edge_index_fc(
-            torch.arange(n_graphs + 1, device=node_attrs.device) * n_atoms,
-            n_atoms,
+        _, pair_lengths = torch_tools.get_distances(
+            positions_1=data['positions'],
+            positions_2=data['positions'],
+            cells=cell,
+            n_graphs=n_graphs,
+            normalize=False,
+            eps=1E-7,
         )
-        n_edges_per_graph = torch.ones(
-            n_graphs, dtype=torch.long, device=node_attrs.device
-        ) * (n_atoms * n_atoms)
-        if cell.shape[1] != 3:
-            _, pair_lengths = torch_tools.get_edge_vectors_and_lengths(
-                positions=data['positions'],
-                edge_index=edge_index_fc,
-                shifts=torch.tensor(0.0, device=cell.device, dtype=cell.dtype),
-                eps=1E-7,
-            )
-        else:
-            cell = cell.reshape(n_graphs, 3, 3)
-            _, pair_lengths = torch_tools.get_mic_distances(
-                positions=data['positions'],
-                edge_index=edge_index_fc,
-                cells=cell,
-                n_edges=n_edges_per_graph,
-                normalize=False,
-                eps=1E-7,
-            )
 
         if return_lengths:
             pair_lengths_ = pair_lengths
@@ -371,35 +355,18 @@ class PairFormerModel(BaseModel):
 
         n_graphs = data['ptr'].numel() - 1
         n_atoms = len(data['pair_masks']) // n_graphs
-        n_edges = n_atoms * n_atoms
 
         pair_masks = pair_masks.reshape(n_graphs, n_atoms, n_atoms)
         node_attrs = node_attrs.reshape(n_graphs, n_atoms, node_attrs.shape[1])
 
-        edge_index_fc = torch_tools.ptr_to_edge_index_fc(
-            torch.arange(n_graphs + 1, device=node_attrs.device) * n_atoms,
-            n_atoms,
+        _, pair_lengths = torch_tools.get_distances(
+            positions_1=positions,
+            positions_2=positions,
+            cells=cell,
+            n_graphs=n_graphs,
+            normalize=False,
+            eps=1E-7,
         )
-        n_edges_per_graph = torch.ones(
-            n_graphs, dtype=torch.long, device=node_attrs.device
-        ) * (n_atoms * n_atoms)
-        if cell.shape[1] != 3:
-            _, pair_lengths = torch_tools.get_edge_vectors_and_lengths(
-                positions=positions,
-                edge_index=edge_index_fc,
-                shifts=torch.tensor(0.0, device=cell.device, dtype=cell.dtype),
-                eps=1E-7,
-            )
-        else:
-            cell = cell.reshape(n_graphs, 3, 3)
-            _, pair_lengths = torch_tools.get_mic_distances(
-                positions=positions,
-                edge_index=edge_index_fc,
-                cells=cell,
-                n_edges=n_edges_per_graph,
-                normalize=False,
-                eps=1E-7,
-            )
         if return_lengths:
             pair_lengths_ = pair_lengths
         if self._radial_embedding is not None:
@@ -425,14 +392,15 @@ class PairFormerModel(BaseModel):
         for i, embedder in enumerate(self.embedders):
             embedding_node_list.append(embedder(node_attrs[..., i]))
         embedding_node = torch.cat(embedding_node_list, dim=-1)
+        embedding_node = embedding_node.reshape(
+            n_graphs, n_atoms, embedding_node.shape[-1]
+        )
 
-        src = edge_index_fc[1, :n_edges].reshape(n_atoms, n_atoms)
-        dst = edge_index_fc[0, :n_edges].reshape(n_atoms, n_atoms)
         embedding_pair = self.W_p(torch.cat(
             [
-                embedding_node[:, src, :],
+                embedding_node.unsqueeze(1).expand(-1, n_atoms, -1, -1),
                 embedding_pair,
-                embedding_node[:, dst, :]
+                embedding_node.unsqueeze(2).expand(-1, -1, n_atoms, -1),
             ],
             dim=-1,
         ))
@@ -513,27 +481,8 @@ class CNModel(nn.Module):
         system_masks_padded = ~data['system_masks_padded'].flatten()
 
         n_graphs = data['ptr'].numel() - 1
-        n_atoms_all = data['ptr'][1:] - data['ptr'][:-1]
         n_centers = data['centers'].shape[1]
 
-        # edge index
-        # NOTE:
-        # sender layout:
-        # [0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 3, 3, 3, 3, 3, ...]
-        #  | n_centers |  | n_centers |  | n_centers |  | n_centers |
-        #  |         graph_1          |  |         graph_2          |
-        #  |         n_centers * n_atoms_padded_environment         |
-        # receiver layout:
-        # [0, 1, 2, 3, 4, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 5, 6, 7, 8, 9, ...]
-        #  | n_centers |  | n_centers |  | n_centers |  | n_centers |
-        #  |         n_centers * n_atoms_padded_environment         |
-        system_masks_padded_repeat = torch.repeat_interleave(
-            system_masks_padded,
-            torch.ones(
-                len(system_masks_padded), dtype=torch.long, device=cell.device
-            ) * n_centers,
-            dim=0,
-        )
         environment_masks_repeat = torch.repeat_interleave(
             environment_masks,
             torch.ones(
@@ -542,55 +491,19 @@ class CNModel(nn.Module):
             dim=0,
         )
 
-        sender = torch.arange(
-            len(data['positions']), dtype=torch.long, device=cell.device
-        )
-        sender = torch.repeat_interleave(
-            sender,
-            torch.ones(
-                len(sender), dtype=torch.long, device=cell.device
-            ) * n_centers,
-            dim=0,
-        )
-        sender = sender[system_masks_padded_repeat]
-
-        receiver = torch.arange(
-            n_graphs * n_centers, dtype=torch.long, device=cell.device
-        )
-        receiver = receiver.reshape((n_graphs, n_centers))
-        receiver = torch.repeat_interleave(receiver, n_atoms_all, dim=0)
-        receiver = receiver.flatten()
-        receiver = receiver[system_masks_padded_repeat]
-        edge_index = torch.vstack([sender, receiver])
-
         # center positions
         positions_center = torch_tools.get_centers(
             data['positions'], data['centers']
         )
 
         # distances
-        if cell.shape[1] != 3:
-            _, lengths = torch_tools.get_edge_vectors_and_lengths_2(
-                positions_1=data['positions'],
-                positions_2=positions_center,
-                edge_index=edge_index,
-                shifts=torch.tensor(0.0, device=cell.device, dtype=cell.dtype),
-                eps=1E-7,
-            )
-        else:
-            cell = cell.reshape(n_graphs, 3, 3)
-            n_edges_per_graph = (
-                n_atoms_all - data['n_system_padded'].flatten()
-            ) * n_centers
-            _, lengths = torch_tools.get_mic_distances_2(
-                positions_1=data['positions'],
-                positions_2=positions_center,
-                edge_index=edge_index,
-                cells=cell,
-                n_edges=n_edges_per_graph.to(torch.long),
-                normalize=False,
-                eps=1E-7,
-            )
+        _, lengths = torch_tools.get_distances(
+            positions_1=data['positions'][system_masks_padded],
+            positions_2=positions_center,
+            cells=cell,
+            n_graphs=n_graphs,
+            eps=1E-7,
+        )
 
         # decay
         lengths = lengths.flatten()
@@ -612,17 +525,10 @@ class CNModel(nn.Module):
         lengths[distance_masks] = 0
 
         # sum
-        results = torch.zeros(
-            n_graphs * n_centers, dtype=cell.dtype, device=cell.device,
+        results = lengths.reshape(
+            n_graphs, lengths.shape[0] // (n_centers * n_graphs), n_centers
         )
-        results.scatter_add_(0, receiver, lengths)
-        results = results.reshape(n_graphs, n_centers)
-
-        # NOTE: to do the AOT compilation, we use the above code, which works
-        # as the same as the following one:
-        #
-        # results = torch_tools.scatter_sum(lengths, receiver, dim=0)
-        # results = results.reshape(n_graphs, n_centers)
+        results = results.sum(dim=1)
 
         return results
 
