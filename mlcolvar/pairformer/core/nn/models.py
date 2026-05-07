@@ -650,6 +650,14 @@ def test_pairformer() -> None:
         ) < 1E-12
     ).all()
 
+    model = PairFormerModel(2, mapping_names, n_layers=2)
+    assert (
+        torch.abs(
+            model(data) -
+            torch.tensor([[-0.1672441388337443, 0.20963137884834385]] * 6)
+        ) < 1E-12
+    ).all()
+
     data, mapping_names = test_get_data(True)
 
     model = PairFormerModel(
