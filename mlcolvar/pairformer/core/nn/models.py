@@ -477,8 +477,8 @@ class CNModel(nn.Module):
         """
 
         cell = data['cell']
-        environment_masks = data['environment_masks'].flatten()
-        system_masks_padded = ~data['system_masks_padded'].flatten()
+        environment_masks = data['environment_masks'].view(-1)
+        system_masks_padded = ~data['system_masks_padded'].view(-1)
 
         n_graphs = data['ptr'].numel() - 1
         n_centers = data['centers'].shape[1]

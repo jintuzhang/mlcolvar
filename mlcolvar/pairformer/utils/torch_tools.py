@@ -66,49 +66,61 @@ def get_distances(
     eps: float = 0.0,
     is_orthogonal: bool = False,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
+    """
+    Get fully connected distances between two groups of atoms.
+
+    Parameters
+    ----------
+    position_1: torch.Tensor (shape: [n_atoms_1 * n_graphs, 3])
+        The position vector of group 1 atoms.
+    position_2: torch.Tensor (shape: [n_atoms_2 * n_graphs, 3])
+        The position vector of group 2 atoms.
+    cells: torch.Tensor (shape: [n_graphs * 3, 3])
+        The cell vectors.
+    n_graphs: int
+        Number of graphs.
+    normalize: bool
+        If return the normalized distance vectors.
+    eps: float
+        A value added to the distance vectors for numerical stability.
+    is_orthogonal: bool
+        If the cell is orthogonal.
+    """
 
     s_1 = positions_1.shape[0] // n_graphs
     s_2 = positions_2.shape[0] // n_graphs
 
-    positions_1_ = torch.repeat_interleave(
-        positions_1, s_2, dim=0
-    )
-    positions_2_ = torch.repeat_interleave(
-        positions_2.reshape(n_graphs, s_2, 3), s_1, dim=0
-    ).reshape(
-        s_1 * s_2 * n_graphs, 3
-    )
+    positions_1_ = positions_1.view(n_graphs, s_1, 3)
+    positions_2_ = positions_2.view(n_graphs, s_2, 3)
 
-    vectors = positions_2_ - positions_1_
+    vectors = (
+        positions_2_.unsqueeze(1).expand(-1, s_1, -1, -1)
+        - positions_1_.unsqueeze(2).expand(-1, -1, s_2, -1)
+    )  # [n_graphs, s_1, s_2, 3]
 
     if cells.shape[1] == 3:
 
         cells = cells.reshape(n_graphs, 3, 3)
-        cells_nodes = torch.repeat_interleave(
-            cells.transpose(2, 1), s_1 * s_2, dim=0
-        )
 
         if is_orthogonal:
             reciprocal = 1.0 / torch.diagonal(cells, dim1=-2, dim2=-1)
             cells_inv = torch.diag_embed(reciprocal)
         else:
             cells_inv = torch.linalg.pinv(cells.transpose(2, 1))
-        cells_inv_nodes = torch.repeat_interleave(
-            cells_inv, s_1 * s_2, dim=0
-        )
 
-        positions_1_s = torch.einsum(
-            'bi,bij->bj', positions_1_, cells_inv_nodes
-        )
-        positions_2_s = torch.einsum(
-            'bi,bij->bj', positions_2_, cells_inv_nodes
-        )
-        deltas = positions_1_s - positions_2_s
+        positions_1_s = torch.einsum('bki,bij->bkj', positions_1_, cells_inv)
+        positions_2_s = torch.einsum('bki,bij->bkj', positions_2_, cells_inv)
+
+        deltas = (
+            positions_1_s.unsqueeze(2).expand(-1, -1, s_2, -1)
+            - positions_2_s.unsqueeze(1).expand(-1, s_1, -1, -1)
+        )  # [n_graphs, s_1, s_2, 3]
         unit_shifts = torch.round(deltas)
-        shifts = torch.einsum('bi,bij->bj', unit_shifts, cells_nodes)
+        shifts = torch.einsum('bkli,bij->bklj', unit_shifts, cells)
 
         vectors = vectors + shifts
 
+    vectors = vectors.flatten(-4, -2)  # [n_graphs * s_1 * s_2, 3]
     lengths = torch.linalg.norm(vectors + eps, dim=-1, keepdim=True)
 
     if normalize:
