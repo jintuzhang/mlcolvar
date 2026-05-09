@@ -90,7 +90,7 @@ class FFNNModel(BaseModel):
         cutoff: float = -1.0,
         hidden_layers: List[int] = [8],
         drop_rate: float = 0.0,
-        activation: str = 'SiLU',
+        activation: str = 'ELU',
     ) -> None:
 
         super().__init__(n_out, -1.0, 2, 0)
@@ -103,8 +103,9 @@ class FFNNModel(BaseModel):
             layers.append(nn.Linear(hidden_layers[i], hidden_layers[i + 1]))
             layers.append(eval(f'torch.nn.{activation}')())
         self.layers = layers
+        self.cn_layer = None
 
-        self._mapping_names = {}
+        self._mapping_names = mapping_names
 
     def reset_parameters(self) -> None:
 
