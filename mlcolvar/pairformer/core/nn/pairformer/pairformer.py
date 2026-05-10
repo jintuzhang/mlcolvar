@@ -1319,7 +1319,7 @@ class PairformerBlock(nn.Module):
         no_heads_pair: int = 1,
         dropout: float = 0.1,
         triangle_multiplicative: Optional[str] = 'torch',
-        triangle_attention: str = 'triattention',
+        triangle_attention: Optional[str] = 'triattention',
         pair_transition: bool = True,
     ) -> None:
         """
@@ -1374,6 +1374,13 @@ class PairformerBlock(nn.Module):
             self.single_transition = Transition(c_in=c_s, n=4)
         self._triangle_multiplicative = triangle_multiplicative
         self._triangle_attention = triangle_attention
+        assert (
+            (triangle_attention is not None)
+            or (triangle_multiplicative is not None)
+        ), (
+            'Options `triangle_attention` and `triangle_multiplicative` can '
+            'not be None at the same time!'
+        )
 
     def reset_parameters(self) -> None:
         if self._triangle_multiplicative is not None:
@@ -1429,32 +1436,33 @@ class PairformerBlock(nn.Module):
                     _add_with_inplace=True,
                     triangle_multiplicative=self._triangle_multiplicative,
                 )  # [N_token, N_token, c_z] step2
-            z += self.tri_att_start(
-                z,
-                mask=pair_mask,
-                triangle_attention=self._triangle_attention,
-                inplace_safe=inplace_safe,
-                chunk_size=chunk_size,
-            )  # [N_token, N_token, c_z] step3
-            z = z.transpose(
-                -2, -3
-            ).contiguous()  # [N_token, N_token, c_z] step4
-            z += self.tri_att_end(
-                z,
-                mask=(
-                    pair_mask.transpose(-1, -2)
-                    if pair_mask is not None
-                    else None
-                ),
-                triangle_attention=self._triangle_attention,
-                inplace_safe=inplace_safe,
-                chunk_size=chunk_size,
-            )  # [N_token, N_token, c_z] step5
-            z = z.transpose(
-                -2, -3
-            ).contiguous()  # [N_token, N_token, c_z] step6
-            if self.pair_transition is not None:
-                z += self.pair_transition(z)  # [N_token, N_token, c_z] step7
+            if self._triangle_attention is not None:
+                z += self.tri_att_start(
+                    z,
+                    mask=pair_mask,
+                    triangle_attention=self._triangle_attention,
+                    inplace_safe=inplace_safe,
+                    chunk_size=chunk_size,
+                )  # [N_token, N_token, c_z] step3
+                z = z.transpose(
+                    -2, -3
+                ).contiguous()  # [N_token, N_token, c_z] step4
+                z += self.tri_att_end(
+                    z,
+                    mask=(
+                        pair_mask.transpose(-1, -2)
+                        if pair_mask is not None
+                        else None
+                    ),
+                    triangle_attention=self._triangle_attention,
+                    inplace_safe=inplace_safe,
+                    chunk_size=chunk_size,
+                )  # [N_token, N_token, c_z] step5
+                z = z.transpose(
+                    -2, -3
+                ).contiguous()  # [N_token, N_token, c_z] step6
+                if self.pair_transition is not None:
+                    z += self.pair_transition(z)  # [N_token, N_token, c_z] step7
         else:
             if self._triangle_multiplicative is not None:
                 tmu_update = self.tri_mul_out(
@@ -1475,33 +1483,34 @@ class PairformerBlock(nn.Module):
                 )
                 z = z + self.dropout_row(tmu_update)
                 del tmu_update
-            z = z + self.dropout_row(
-                self.tri_att_start(
-                    z,
-                    mask=pair_mask,
-                    triangle_attention=self._triangle_attention,
-                    inplace_safe=inplace_safe,
-                    chunk_size=chunk_size,
+            if self._triangle_attention is not None:
+                z = z + self.dropout_row(
+                    self.tri_att_start(
+                        z,
+                        mask=pair_mask,
+                        triangle_attention=self._triangle_attention,
+                        inplace_safe=inplace_safe,
+                        chunk_size=chunk_size,
+                    )
                 )
-            )
-            z = z.transpose(-2, -3)
-            z = z + self.dropout_row(
-                self.tri_att_end(
-                    z,
-                    mask=(
-                        pair_mask.transpose(-1, -2)
-                        if pair_mask is not None
-                        else None
-                    ),
-                    triangle_attention=self._triangle_attention,
-                    inplace_safe=inplace_safe,
-                    chunk_size=chunk_size,
+                z = z.transpose(-2, -3)
+                z = z + self.dropout_row(
+                    self.tri_att_end(
+                        z,
+                        mask=(
+                            pair_mask.transpose(-1, -2)
+                            if pair_mask is not None
+                            else None
+                        ),
+                        triangle_attention=self._triangle_attention,
+                        inplace_safe=inplace_safe,
+                        chunk_size=chunk_size,
+                    )
                 )
-            )
-            z = z.transpose(-2, -3)
+                z = z.transpose(-2, -3)
 
-            if self.pair_transition is not None:
-                z = z + self.pair_transition(z)
+                if self.pair_transition is not None:
+                    z = z + self.pair_transition(z)
         if self.c_s > 0:
             s = s + self.attention_pair_bias(
                 a=s,
