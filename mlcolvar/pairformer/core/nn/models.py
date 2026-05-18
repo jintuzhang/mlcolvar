@@ -215,6 +215,8 @@ class PairFormerModel(BaseModel):
         If apply pair transition.
     n_polynomials: int
         Order of the polynomials in the basis functions.
+    residual_update: bool
+        If apply residual update.
 
     References
     ----------
@@ -242,6 +244,7 @@ class PairFormerModel(BaseModel):
         pair_transition: bool = True,
         n_polynomials: int = 0,
         cn_options: Optional[Dict[str, Any]] = None,
+        residual_update: bool = False,
     ) -> None:
 
         if n_bases <= 0:
@@ -302,6 +305,7 @@ class PairFormerModel(BaseModel):
             nn.Linear(n_in_w_out // 2, n_out)
         ])
 
+        self._residual_update = residual_update
         self._mapping_names = mapping_names
         self._n_embedding_pair = n_embedding_pair
         self._n_centers = n_out_w_c // 2
@@ -408,9 +412,13 @@ class PairFormerModel(BaseModel):
 
         # other layers: distance + node type
         for layer in self.layers[1:]:
-            _, embedding_pair = layer(
+            _, embedding_pair_ = layer(
                 s=None, z=embedding_pair, pair_mask=pair_masks
             )
+            if self._residual_update:
+                embedding_pair = embedding_pair + embedding_pair_
+            else:
+                embedding_pair = embedding_pair_
 
         n_values = pair_masks.sum(dim=(1, 2))
         out = (embedding_pair * pair_masks.unsqueeze(-1)).sum(dim=(1, 2))
