@@ -215,8 +215,12 @@ class PairFormerModel(BaseModel):
         If apply pair transition.
     n_polynomials: int
         Order of the polynomials in the basis functions.
+    cn_options: Dict[str, Union[int, float]]
+        CN model options.
     residual_update: bool
         If apply residual update.
+    larger_w_out: bool
+        If use a larger readout network. May be useful for CN models.
 
     References
     ----------
@@ -245,6 +249,7 @@ class PairFormerModel(BaseModel):
         n_polynomials: int = 0,
         cn_options: Optional[Dict[str, Any]] = None,
         residual_update: bool = False,
+        larger_w_out: bool = False,
     ) -> None:
 
         if n_bases <= 0:
@@ -303,8 +308,15 @@ class PairFormerModel(BaseModel):
             nn.Linear(n_in_w_out, n_in_w_out // 2),
             pairformer.utils.ShiftedSoftplus(),
             nn.Linear(n_in_w_out // 2, n_out)
+        ]) if not larger_w_out else nn.Sequential(*[
+            nn.Linear(n_in_w_out, n_in_w_out),
+            pairformer.utils.ShiftedSoftplus(),
+            nn.Linear(n_in_w_out, n_in_w_out // 2),
+            pairformer.utils.ShiftedSoftplus(),
+            nn.Linear(n_in_w_out // 2, n_out)
         ])
 
+        self._larger_w_out = larger_w_out
         self._residual_update = residual_update
         self._mapping_names = mapping_names
         self._n_embedding_pair = n_embedding_pair
@@ -324,6 +336,9 @@ class PairFormerModel(BaseModel):
         self.W_out[2].bias.data.fill_(0)
         nn.init.xavier_uniform_(self.W_p.weight)
         self.W_p.bias.data.fill_(0)
+        if self._larger_w_out:
+            nn.init.xavier_uniform_(self.W_out[4].weight)
+            self.W_out[4].bias.data.fill_(0)
         if self.W_x is not None:
             nn.init.xavier_uniform_(self.W_x.weight)
         if self.W_b is not None:
