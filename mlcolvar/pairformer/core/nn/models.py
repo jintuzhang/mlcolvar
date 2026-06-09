@@ -228,6 +228,8 @@ class PairFormerModel(BaseModel):
         If apply residual update.
     larger_w_out: bool
         If use a larger readout network. May be useful for CN models.
+    basis_type: str
+        Type of the basis function.
 
     References
     ----------
@@ -257,12 +259,13 @@ class PairFormerModel(BaseModel):
         cn_options: Optional[Dict[str, Any]] = None,
         residual_update: bool = False,
         larger_w_out: bool = False,
+        basis_type: str = 'gaussian'
     ) -> None:
 
         if n_bases <= 0:
             n_bases = n_embedding_pair
 
-        super().__init__(n_out, cutoff, n_bases, n_polynomials, 'gaussian')
+        super().__init__(n_out, cutoff, n_bases, n_polynomials, basis_type)
 
         n_embedding = n_embedding_pair // 2
         n_embedders = len(mapping_names.keys())
@@ -494,6 +497,8 @@ class PairBiasModel(BaseModel):
         If apply residual update.
     larger_w_out: bool
         If use a larger readout network. May be useful for CN models.
+    basis_type: str
+        Type of the basis function.
 
     References
     ----------
@@ -518,12 +523,13 @@ class PairBiasModel(BaseModel):
         cn_options: Optional[Dict[str, Any]] = None,
         residual_update: bool = False,
         larger_w_out: bool = False,
+        basis_type: str = 'gaussian'
     ) -> None:
 
         if n_bases <= 0:
             n_bases = n_embedding_pair
 
-        super().__init__(n_out, cutoff, n_bases, n_polynomials, 'gaussian')
+        super().__init__(n_out, cutoff, n_bases, n_polynomials, basis_type)
 
         n_embedders = len(mapping_names.keys())
 
