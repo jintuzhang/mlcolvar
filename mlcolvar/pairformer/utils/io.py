@@ -30,6 +30,7 @@ def create_dataset_from_trajectories(
     center_selections: List[str] = [],
     n_atoms_padded: int = 0,
     n_atoms_padded_environment: int = 0,
+    n_residues_padded: int = 0,
     return_trajectories: bool = False,
     no_pbc: bool = False,
     show_progress: bool = True,
@@ -76,6 +77,8 @@ def create_dataset_from_trajectories(
         Number of nodes after padding.
     n_atoms_padded_environment: int
         Number of environment nodes after padding.
+    n_residues_padded: int
+        Number of residues after padding.
     return_trajectories: bool
         If also return the loaded trajectory objects.
     no_pbc: bool
@@ -277,6 +280,7 @@ def create_dataset_from_trajectories(
                         cutoff,
                         n_atoms_padded,
                         n_atoms_padded_environment,
+                        n_residues_padded,
                         show_progress,
                     )
                     for i in indices
@@ -305,6 +309,7 @@ def create_dataset_from_trajectories(
             cutoff,
             n_atoms_padded,
             n_atoms_padded_environment,
+            n_residues_padded,
             show_progress,
         )
 
@@ -457,6 +462,17 @@ def _configures_from_trajectory(
         residue_names = [a.residue.name for a in trajectory.top.atoms]
         node_attrs['residue_names'] = residue_names
 
+    if system_atoms is not None:
+        resseq = [
+            trajectory.top._atoms[i].residue.resSeq for i in system_atoms
+        ]
+        chain_id = [
+            trajectory.top.atoms.residue.chain.chain_id for i in system_atoms
+        ]
+    else:
+        resseq = [a.residue.resSeq for a in trajectory.top.atoms]
+        chain_id = [a.residue.chain.chain_id for a in trajectory.top.atoms]
+
     configurations = []
     for i in range(len(trajectory)):
         configuration = pdata.atomic.Configuration(
@@ -469,6 +485,8 @@ def _configures_from_trajectory(
             environment=environment_atoms,
             centers=center_atoms_list,
             node_attrs=node_attrs,
+            chain_id=chain_id,
+            resseq=resseq,
         )
         configurations.append(configuration)
 
