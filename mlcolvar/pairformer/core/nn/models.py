@@ -521,7 +521,7 @@ class PairBiasModel(BaseModel):
         drop_rate: float = 0.0,
         n_polynomials: int = 0,
         cn_options: Optional[Dict[str, Any]] = None,
-        residual_update: bool = False,
+        residual_update: bool = True,
         larger_w_out: bool = False,
         basis_type: str = 'gaussian'
     ) -> None:
