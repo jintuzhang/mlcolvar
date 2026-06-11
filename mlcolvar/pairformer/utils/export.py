@@ -23,6 +23,8 @@ if os.environ.get('MLCOLVAR_EXPORT_MAXIMUM_OPT') == '1':
     torch._inductor.config.max_autotune = True
     torch._inductor.config.max_autotune_gemm = True
     torch._inductor.config.cuda.compile_opt_level = '-O3'
+    torch._inductor.config.max_autotune_gemm_search_space = 'EXHAUSTIVE'
+    torch._inductor.config.max_autotune_flex_search_space = 'EXHAUSTIVE'
     if hasattr(
         torch._inductor.config.aot_inductor, 'compile_wrapper_opt_level'
     ):
