@@ -464,10 +464,12 @@ def _configures_from_trajectory(
 
     if system_atoms is not None:
         resseq = [
-            trajectory.top._atoms[i].residue.resSeq for i in system_atoms
+            trajectory.top._atoms[i].residue.resSeq
+            for i in system_atoms
         ]
         chain_id = [
-            trajectory.top.atoms.residue.chain.chain_id for i in system_atoms
+            trajectory.top._atoms[i].residue.chain.chain_id
+            for i in system_atoms
         ]
     else:
         resseq = [a.residue.resSeq for a in trajectory.top.atoms]

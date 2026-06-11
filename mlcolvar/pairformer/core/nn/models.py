@@ -677,7 +677,7 @@ class PairFormerRLModel(BaseModel):
 
         n_graphs = data['ptr'].numel() - 1
         n_residues = len(data['pair_masks']) // n_graphs
-        n_atoms = edges.shape[1]
+        n_atoms = len(data['system_masks']) // n_graphs
 
         edges = edges.reshape(n_graphs, n_residues, n_atoms).to(cell.dtype)
         edges = edges / edges.sum(-1, keepdim=True)

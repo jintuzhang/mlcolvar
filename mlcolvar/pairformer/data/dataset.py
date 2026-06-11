@@ -359,7 +359,19 @@ def _create_dataset_from_configuration(
             (n_residues_padded, n_residues_padded), dtype=torch.long
         )
         pair_masks[:len(counter), :len(counter)] = 1
+
+        # NOTE: you may ask: what is the use of this extra mask?
+        # There is no direct use! However, it provides the correct size of the
+        # system atoms. If we use `residue_adjustency.shape[0]`, Torch v2.9
+        # will not understand the shape dependency, and will generate the
+        # following stupid error:
+        # error: use of undeclared identifier 's75'
+        # if (!(u0 == s75)) { throw std::runtime_error("..."); }
+        #             ^
+        system_masks = torch.zeros((n_atoms_padded, 1), dtype=bool)
+        system_masks[:len(positions_system), :] = 1
     else:
+        system_masks = None
         residue_adjustency = None
         pair_masks = torch.zeros(
             (n_atoms_padded, n_atoms_padded), dtype=torch.long
@@ -395,6 +407,8 @@ def _create_dataset_from_configuration(
         environment_masks=environment_masks,
         # [n_residues_padded, n_atoms_padded]
         residue_adjustency=residue_adjustency,
+        # [n_atoms_padded, 1]
+        system_masks=system_masks,
     )
 
 

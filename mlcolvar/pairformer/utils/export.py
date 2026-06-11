@@ -41,7 +41,7 @@ __all__ = ['export', 'load_exported']
 
 
 _MODEL_INPUT_TYPE = eval(
-    'Tuple[{}]'.format(''.join(['torch.Tensor,' for _ in range(12)]))
+    'Tuple[{}]'.format(''.join(['torch.Tensor,' for _ in range(14)]))
 )
 _MODEL_OUTPUT_TYPE = eval(
     'Tuple[{}]'.format(''.join(['torch.Tensor,' for _ in range(4)]))
@@ -287,6 +287,17 @@ def _set_check_dtype_device_cxx(
                 + '`mlcolvar.pairformer.torch_tools.set_default_dtype` method '
                 + 'at the begining of your export script.'
             )
+    else:
+        if torch._inductor.config.cpp.cxx != 'clang++':
+            warnings.warn(
+                'You are exporting a PairFormer model using GCC, this may '
+                + 'cause compilation failures. It is recommended to use the '
+                + 'clang++ compiler, on Debian-like systems '
+                + 'you may install it with command: '
+                + '`sudo apt install clang libomp-dev`, and add the following '
+                + 'line to your exporting script: '
+                + '`torch._inductor.config.cpp.cxx = \'clang++\'`.'
+            )
 
     return model
 
@@ -307,6 +318,8 @@ def _get_inputs(
 
 def _dict_to_tensors(inputs: Dict[str, torch.Tensor]) -> Tuple[torch.Tensor]:
 
+    device = inputs['positions'].device
+
     outputs = (
         inputs['positions'],
         inputs['node_attrs'],
@@ -320,6 +333,18 @@ def _dict_to_tensors(inputs: Dict[str, torch.Tensor]) -> Tuple[torch.Tensor]:
         inputs['n_environment_padded'],
         inputs['environment_masks'],
         inputs['centers'],
+        (
+            inputs['residue_adjustency']
+            if 'residue_adjustency' in inputs.keys() else torch.tensor(
+                0, device=device, dtype=torch.long
+            )
+        ),
+        (
+            inputs['system_masks']
+            if 'system_masks' in inputs.keys() else torch.tensor(
+                0, device=device, dtype=torch.long
+            )
+        ),
     )
 
     return outputs
@@ -341,6 +366,10 @@ def _tensors_to_dict(inputs: Tuple[torch.Tensor]) -> Dict[str, torch.Tensor]:
         'environment_masks': inputs[10],
         'centers': inputs[11],
     }
+    if len(inputs[12].shape) != 0:
+        outputs['residue_adjustency'] = inputs[12]
+    if len(inputs[13].shape) != 0:
+        outputs['system_masks'] = inputs[13]
 
     return outputs
 
@@ -377,6 +406,7 @@ def _get_model_metadata(
     model: LightningModule,
     n_atoms_padded: int,
     n_atoms_padded_environment: int,
+    n_residues_padded: int,
     calculate_gradients: bool,
     k_bias_options: Optional[Dict[str, Any]] = None,
     model_summary_level: int = 3,
@@ -409,6 +439,7 @@ def _get_model_metadata(
     mapping = model._model._mapping_names
     metadata['n_embeddings'] = str(len(mapping.keys()))
     metadata['n_atoms_padded'] = str(n_atoms_padded)
+    metadata['n_residues_padded'] = str(n_residues_padded)
 
     count = 0
     for emb in __implemented_embeddings__:
@@ -573,6 +604,7 @@ def export(
     k_bias_options: Optional[Dict[str, Any]] = None,
     n_atoms_padded: int = 0,
     n_atoms_padded_environment: int = 0,
+    n_residues_padded: int = 0,
     model_summary_level: int = 3,
     check_is_orthogonal: bool = True,
 ) -> str:
@@ -612,6 +644,8 @@ def export(
         Number of nodes after padding.
     n_atoms_padded_environment: int
         Number of environment nodes after padding.
+    n_residues_padded: int
+        Number of residues after padding.
     check_is_orthogonal: bool
         Check if the cell matrix is orthogonal. If enabled, when the cell is
         orthogonal a fast matrix inv method will be used. However, models
@@ -700,6 +734,14 @@ def export(
             + 'This might lead to wrong results!'
         )
         n_atoms_padded = inputs[0].shape[0]
+    if n_residues_padded <= 0:
+        if len(inputs[12].shape) != 0:
+            warnings.warn(
+                'Exporting a residue-level pairformer model without exact '
+                + '`n_residues_padded` given! Will estimate this parameter '
+                + 'from example inputs! This might lead to wrong results!'
+            )
+            n_residues_padded = inputs[12].shape[0]
 
     # I hate monkey patch ...
     model._exporting = True
@@ -758,6 +800,7 @@ def export(
         model,
         n_atoms_padded,
         n_atoms_padded_environment,
+        n_residues_padded,
         calculate_gradients,
         k_bias_options,
         model_summary_level,
