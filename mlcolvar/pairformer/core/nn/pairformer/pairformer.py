@@ -1357,7 +1357,10 @@ class PairformerBlock(nn.Module):
             c_hidden=c_hidden_pair_att,
             no_heads=no_heads_pair,
         )
-        self.dropout_row = DropoutRowwise(dropout)
+        if dropout > 0:
+            self.dropout_row = DropoutRowwise(dropout)
+        else:
+            self.dropout_row = nn.Identity()
         if pair_transition:
             self.pair_transition = Transition(c_in=c_z, n=4)
         else:
