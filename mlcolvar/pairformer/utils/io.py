@@ -319,6 +319,39 @@ def create_dataset_from_trajectories(
         return dataset
 
 
+def get_masses_from_trajectories(
+    names: List[str],
+    trajectories: Union[List[List[md.Trajectory]], List[md.Trajectory]]
+) -> List[float]:
+    """
+    Get atomic masses from FF-based atomic names.
+
+    Parameters
+    ----------
+    names: List[str]
+        The atomic names.
+    trajectories: Union[List[List[md.Trajectory]], List[md.Trajectory]]
+        Trajectories returned by the `create_dataset_from_trajectories` method.
+    """
+    masses = []
+    topologies: List[md.Topology] = []
+
+    for i in range(len(trajectories)):
+        if isinstance(trajectories[i], list):
+            for j in range(len(trajectories[i])):
+                topologies.append(trajectories[i][j].top)
+        else:
+            topologies.append(trajectories[i].top)
+    atoms = [a for t in topologies for a in t.atoms]
+    for name in names:
+        for atom in atoms:
+            if name == atom.name:
+                masses.append(atom.element.mass)
+                break
+
+    return masses
+
+
 def _z_table_from_top(
     top: List[md.Topology], element_symbol_as_name: bool = True
 ) -> pdata.atomic.GenericMappingTable:
