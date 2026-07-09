@@ -164,10 +164,10 @@ def _create_dataset_from_configuration(
     #  [[x, y, x], [x, y, x], ..., [0, 0, 0], [0, 0, 0]]
     #   |     n_system     |                          |
     #   |               n_atoms_padded                |
-    # with neighbots:
-    #  [[x_s, y_s, x_s] ..., [0, 0, 0], ... [x_e, y_e, x_e], ..., [0, 0, 0]]
-    #   |  n_system   |              |      | n_neighbors |               |
-    #   |       n_atoms_padded       |      | n_atoms_padded_environment  |
+    # with neighbors:
+    #  [[x_s, y_s, x_s] ..., [0, 0, 0], [x_e, y_e, x_e], ..., [0, 0, 0]]
+    #   |  n_system   |              |  | n_neighbors |               |
+    #   |       n_atoms_padded       |  | n_atoms_padded_environment  |
     # thus, the first `n_atoms_padded` elements of this tensor could be safely
     # used in Pairformer calculations.
 
