@@ -192,8 +192,9 @@ def _create_dataset_from_configuration(
                 f'Not all atoms in center group {i} are system atoms!'
             )
 
+        n_center_atoms_padded = max([len(c) for c in config.centers])
         centers = -torch.ones(
-            (1, len(config.centers), n_atoms_padded), dtype=torch.long
+            (1, len(config.centers), n_center_atoms_padded), dtype=torch.long
         )
         for i, c in enumerate(config.centers):
             centers[0, i, :len(c)] = torch.tensor(c, dtype=torch.long)

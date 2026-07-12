@@ -1268,7 +1268,7 @@ def test_pairbias() -> None:
 
     data, mapping_names = test_get_data()
 
-    model = PairBiasModel(2, mapping_names)
+    model = PairBiasModel(2, mapping_names, residual_update=False)
 
     assert (
         torch.abs(
