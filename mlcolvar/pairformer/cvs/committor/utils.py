@@ -1,0 +1,435 @@
+import torch
+import numpy as np
+
+from typing import Tuple, Dict, Optional, List
+from mlcolvar.pairformer.cvs.cv import PairBaseCV
+from mlcolvar.pairformer.cvs.cv import test_get_data
+from mlcolvar.pairformer import data as pdata
+from mlcolvar.pairformer import utils as putils
+
+"""
+Pairformer committor utils.
+"""
+
+__all__ = [
+    'PairCommittorLoss',
+    'get_dataset_kolmogorov_bias',
+    'compute_committor_weights'
+]
+
+
+class PairCommittorLoss(torch.nn.Module):
+    """
+    Compute Kolmogorov's variational principle loss and impose boundary
+    conditions on the metastable states. Modified for Pairformer.
+
+    Parameters
+    ----------
+    atomic_masses : torch.Tensor
+        Atomic masses of the atoms in the system.
+    alpha : float
+        Hyperparamer that scales the boundary conditions contribution to loss,
+        i.e. alpha*(loss_bound_A + loss_bound_B)
+    gamma : float
+        Hyperparamer that scales the whole loss to avoid too small numbers,
+        i.e. gamma*(loss_var + loss_bound), by default 10000
+    delta_f : float
+        Delta free energy between A (label 0) and B (label 1), units is kBT,
+        by default 0. State B is supposed to be higher in energy.
+    exclude_boundary_in_loss_v : bool
+        Do not include the boundary conformations in the variational loss.
+
+    See Also
+    --------
+    mlcolvar.core.loss.committor.CommittorLoss
+        The original `CommittorLoss` module.
+    """
+
+    def __init__(
+        self,
+        atomic_masses: torch.Tensor,
+        alpha: float,
+        gamma: float = 10000.0,
+        delta_f: float = 0.0,
+        exclude_boundary_in_loss_v: bool = False,
+    ) -> None:
+        super().__init__()
+        atomic_masses = atomic_masses.detach().clone()
+        self.register_buffer('atomic_masses', atomic_masses)
+        self.alpha = alpha
+        self.gamma = gamma
+        self.delta_f = delta_f
+        self.exclude_boundary_in_loss_v = exclude_boundary_in_loss_v
+
+    def forward(
+        self,
+        data: Dict[str, torch.Tensor],
+        q: torch.Tensor,
+        create_graph: bool = True
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        """
+        The forward pass.
+
+        Parameters
+        ----------
+        data: Dict[str, torch.Tensor]
+            The data batch.
+        q : torch.Tensor
+            Committor quess q(x), it is the output of NN
+        """
+        return pairformer_committor_loss(
+            data=data,
+            q=q,
+            atomic_masses=self.atomic_masses,
+            alpha=self.alpha,
+            gamma=self.gamma,
+            delta_f=self.delta_f,
+            create_graph=create_graph,
+            exclude_boundary_in_loss_v=self.exclude_boundary_in_loss_v,
+        )
+
+
+def pairformer_committor_loss(
+    data: Dict[str, torch.Tensor],
+    q: torch.Tensor,
+    atomic_masses: torch.Tensor,
+    alpha: float,
+    gamma: float = 10000.0,
+    delta_f: float = 0.0,
+    create_graph: bool = True,
+    exclude_boundary_in_loss_v: bool = False,
+) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    """
+    Compute variational loss for committor optimization with boundary
+    conditions. Modified for Pairformer.
+
+    Parameters
+    ----------
+    data: Dict[str, torch.Tensor]
+        The data batch.
+    q : torch.Tensor
+        Committor quess q(x), it is the output of NN
+    atomic_masses : torch.Tensor
+        List of masses of all the atoms we are using.
+    alpha : float
+        Hyperparamer that scales the boundary conditions contribution to loss,
+        i.e. alpha*(loss_bound_A + loss_bound_B)
+    gamma : float
+        Hyperparamer that scales the whole loss to avoid too small numbers,
+        i.e. gamma*(loss_var + loss_bound)
+    delta_f : float
+        Delta free energy between A (label 0) and B (label 1), units is kBT.
+    create_graph : bool
+        Make loss backwardable, deactivate for validation to save memory.
+    exclude_boundary_in_loss_v : bool
+        Do not include the boundary conformations in the variational loss.
+
+    Returns
+    -------
+    loss : torch.Tensor
+        Loss value.
+    gamma*loss_var : torch.Tensor
+        The variational loss term
+    gamma*alpha*loss_a : torch.Tensor
+        The boundary loss term on basin A
+    gamma*alpha*loss_b : torch.Tensor
+        The boundary loss term on basin B
+
+    See Also
+    --------
+    mlcolvar.core.loss.committor.committor_loss
+        The original `committor_loss` function.
+    """
+    # inherit right device and dtpye
+    dtype = data['positions'].dtype
+    device = data['positions'].device
+
+    atomic_masses = atomic_masses.to(dtype).to(device)
+
+    # Create masks to access different states data
+    labels = data['graph_labels'].long().squeeze()
+    mask_a = labels == 0
+    mask_b = labels == 1
+    mask_v = ~mask_a & ~mask_b
+
+    # Update weights of basin B using the information on the delta_f
+    weights = data['weight'].clone()
+    if delta_f < 0:  # B higher in energy --> A-B < 0
+        factor = torch.exp(
+            torch.tensor([delta_f], dtype=dtype, device=device)
+        )
+        weights[mask_b] = weights[mask_b] * factor
+    if delta_f > 0:  # A higher in energy --> A-B > 0
+        factor = torch.exp(
+            torch.tensor([delta_f], dtype=dtype, device=device) * -1
+        )
+        weights[mask_a] = weights[mask_a] * factor
+
+    # Each loss contribution is scaled by the number of samples
+
+    # We need the gradient of q(x)
+    # NOTE: we don't need to consider padding atoms here, since we have enabled
+    # `allow_unused` and `materialize_grads`, and thus gradients of the padding
+    # atoms will be zero.
+    grad_outputs: Optional[List[Optional[torch.Tensor]]] = [
+        torch.ones_like(q, device=device)
+    ]
+    gradients = torch.autograd.grad(
+        [q],
+        [data['positions']],
+        grad_outputs=grad_outputs,
+        retain_graph=True,
+        create_graph=create_graph,
+        allow_unused=True,
+        materialize_grads=True,
+    )[0]  # [n_nodes, 3]
+    assert gradients is not None
+
+    # we sanitize the shapes of mass and weights tensors
+    node_types = data['node_attrs'][:, 0]  # [n_graphs, 1]
+    atomic_masses = atomic_masses[node_types].unsqueeze(-1)  # [n_nodes, 1]
+    weights = weights.unsqueeze(-1)  # [n_graphs, 1]
+
+    # square, do the mass-weight, and sum over Cartesian dims
+    gradients_atomic = torch.pow(gradients, 2) / atomic_masses  # [n_nodes, 3]
+    gradients_atomic = torch.sum(
+        gradients_atomic, dim=1, keepdim=True
+    )  # [n_nodes, 1]
+    # sum over batchs
+    gradients_batch = putils.torch_tools.scatter_sum(
+        gradients_atomic, data['batch'], dim=0
+    )  # [n_graphs, 1]
+    # ensemble avg.
+    if exclude_boundary_in_loss_v:
+        loss_v = torch.mean((gradients_batch * weights)[mask_v])  # [,]
+    else:
+        loss_v = torch.mean((gradients_batch * weights))  # [,]
+
+    # boundary conditions
+    loss_a = torch.mean(torch.pow(q[mask_a], 2))
+    loss_b = torch.mean(torch.pow((q[mask_b] - 1.0), 2))
+
+    # avoid nan
+    loss_a = torch.nan_to_num(loss_a)
+    loss_b = torch.nan_to_num(loss_b)
+    loss_v = torch.nan_to_num(loss_v)
+
+    loss = loss_v.log() + gamma * (alpha * (loss_a + loss_b))
+
+    return (
+        loss, loss_v.log(), alpha * gamma * loss_a, alpha * gamma * loss_b
+    )
+
+
+def get_dataset_kolmogorov_bias(
+    model: PairBaseCV,
+    dataset: pdata.PairDataSet,
+    beta: float,
+    epsilon: float = 1E-6,
+    lambd: float = 1.0,
+    weighted: bool = False,
+    batch_size: int = None,
+    show_progress: bool = True,
+    progress_prefix: str = 'Calculating KM Bias'
+) -> np.ndarray:
+    """
+    Wrappper class to compute the Kolmogorov bias V_K from a GNN-based
+    committor model.
+
+    Parameters
+    ----------
+    model : torch.nn.Module
+        Model to compute the bias from.
+    dataset: mlcovar.pairformer.data.PairDataSet
+        Dataset on which to compute the bias.
+    beta: float
+        Inverse temperature in the right energy units, i.e. 1/(k_B*T)
+    epsilon : float
+        Regularization term in the logarithm.
+    lambd : float
+        Multiplicative term for the whole bias.
+    weighted : bool
+        If calculate the mass weighted bias value.
+    batch_size:
+        Batch size used for evaluating the CV.
+    show_progress: bool
+        If show the progress bar.
+    """
+
+    device = next(model.parameters()).device
+    epsilon = torch.tensor(epsilon, dtype=torch.float64)
+
+    datamodule = pdata.PairDataModule(
+        dataset,
+        lengths=(1.0,),
+        batch_size=batch_size,
+        random_split=False,
+        shuffle=False
+    )
+    datamodule.setup()
+
+    gradients_list = []
+    atomic_masses = pdata.atomic.get_masses(
+        dataset.mapping_names['atom_names']
+    )
+    atomic_masses = torch.tensor(
+        atomic_masses, dtype=torch.get_default_dtype(), device=device
+    )
+
+    if show_progress:
+        items = putils.progress.pbar(
+            datamodule.train_dataloader(),
+            frequency=0.001,
+            prefix=progress_prefix
+        )
+    else:
+        items = datamodule.train_dataloader()
+
+    for batchs in items:
+        batch_dict = batchs.to(device).to_dict()
+        q = model(batch_dict)[:, 1].unsqueeze(-1)
+        grad_outputs: Optional[List[Optional[torch.Tensor]]] = [
+            torch.ones_like(q, device=device)
+        ]
+        gradients = torch.autograd.grad(
+            outputs=[q],
+            inputs=[batch_dict['positions']],
+            grad_outputs=grad_outputs,
+            retain_graph=False,
+            create_graph=False,
+            allow_unused=True,
+            materialize_grads=True,
+        )[0]
+
+        # get masses
+        node_types = batch_dict['node_attrs'][:, 0]
+        atomic_masses_used = atomic_masses[node_types].unsqueeze(-1)
+
+        # square and sum over Cartesian dims
+        gradients_atomic = torch.pow(gradients, 2)  # [n_nodes, 3]
+        if weighted:
+            gradients_atomic = gradients_atomic / atomic_masses_used
+        gradients_atomic = torch.sum(
+            gradients_atomic, dim=1, keepdim=True
+        )  # [n_nodes, 1]
+        # sum over batchs
+        gradients_batch = putils.torch_tools.scatter_sum(
+            gradients_atomic, batch_dict['batch'], dim=0
+        )  # [n_graphs, 1]
+
+        gradients_list.append(gradients_batch)
+
+    gradients = torch.vstack(gradients_list)
+    bias = -lambd * (1 / beta) * (
+        torch.log(gradients + epsilon) - torch.log(epsilon)
+    )
+
+    return bias.cpu().numpy()
+
+
+def compute_committor_weights(
+    dataset: pdata.PairDataSet,
+    bias: torch.Tensor,
+    beta: float
+) -> pdata.PairDataSet:
+    """
+    Utils to update a `PairDataSet` object with the appropriate weights for
+    the training set for the learning of committor function.
+
+    Parameters
+    ----------
+    dataset: mlcovar.pairformer.data.PairDataSet
+        The pairformer dataset.
+    bias : torch.Tensor
+        Bias values for the data in the dataset, usually it should be the
+        committor-based bias.
+    beta : float
+        Inverse temperature in the right energy units
+
+    Returns
+    -------
+    dataset: mlcovar.pairformer.data.PairDataSet
+        Updated dataset with weights and updated labels.
+    """
+    assert len(dataset) == len(bias)
+
+    if type(bias) is torch.Tensor:
+        bias = bias.detach().clone()
+    else:
+        bias = torch.tensor(bias, dtype=torch.get_default_dtype())
+    if bias.isnan().any():
+        raise ValueError(
+            'Found Nan(s) in bias tensor. Check before proceeding! '
+            + 'If no bias was applied replace Nan with zero!'
+        )
+
+    # TODO sign if not from committor bias
+    weights = torch.exp(beta * bias)
+    labels = torch.tensor(
+        [d['graph_labels'][0, 0] for d in dataset]
+    ).long()
+
+    for i in np.unique(labels.cpu().numpy()):
+        # compute average of exp(beta*V) on this simualtions
+        coeff = 1 / torch.mean(
+            weights[torch.nonzero(labels == i, as_tuple=True)]
+        )
+        # update the weights
+        weights[
+            torch.nonzero(labels == i, as_tuple=True)
+        ] = coeff * weights[
+            torch.nonzero(labels == i, as_tuple=True)
+        ]
+
+    # update dataset
+    for i in range(len(dataset)):
+        dataset[i]['weight'] = weights[i]
+
+    return dataset
+
+
+def test_committor_loss() -> None:
+    putils.torch_tools.set_default_dtype('float64')
+
+    loss = PairCommittorLoss(torch.tensor([1.0]), 1.0)
+
+    data = {
+        'positions': torch.tensor([[0.2, 0, 0], [1.8, 0, 0], [0.5, 0, 0]]),
+        'graph_labels': torch.tensor([[0], [1], [2]]),
+        'node_attrs': torch.tensor([[0], [0], [0]]),
+        'weight': torch.tensor([1.0, 1.0, 1.0]),
+        'batch': torch.tensor([0, 1, 2], dtype=torch.long),
+    }
+    data['positions'].requires_grad_(True)
+
+    q = data['positions'][:, 0] * 0.5
+    results = loss(data, q)
+
+    assert results[0] - torch.log(torch.tensor(1 / 2) ** 2) - 200 < 1E-12
+    assert results[1] - torch.log(torch.tensor(1 / 2) ** 2) < 1E-12
+    assert results[2] - 100.0 < 1E-12
+    assert results[3] - 100.0 < 1E-12
+
+
+def test_compute_committor_weights() -> None:
+    putils.torch_tools.set_default_dtype('float64')
+
+    data, _ = test_get_data()
+    data['graph_labels'] = torch.tensor([[0], [1]] + [[2]] * 4)
+    weights = torch.tensor([
+        d.weight for d in
+        compute_committor_weights(
+            data.to_data_list(), torch.tensor([0] * 4 + [1] * 2), 1.0
+        )
+    ])
+    z = (torch.e * 2 + 2) / 4
+
+    assert (
+        weights - torch.tensor([1.0] * 2 + [1 / z] * 2 + [torch.e / z] * 2)
+        < 1E-12
+    ).all()
+
+
+if __name__ == '__main__':
+    test_committor_loss()
+    test_compute_committor_weights()

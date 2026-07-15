@@ -1,0 +1,234 @@
+import torch
+import torch_geometric as tg
+from typing import Dict, Any, List, Union
+
+from mlcolvar.core.loss import TDALoss
+from mlcolvar.pairformer.cvs import PairBaseCV
+from mlcolvar.pairformer.cvs.cv import test_get_data
+from mlcolvar.pairformer.utils import torch_tools
+
+"""
+The Deep Targeted Discriminant Analysis (Deep-TDA) CV based on Pairformer.
+"""
+
+__all__ = ['PairDeepTDA']
+
+
+class PairDeepTDA(PairBaseCV):
+    """
+    The Deep Targeted Discriminant Analysis (Deep-TDA) CV [1] based on
+    Pairformer.
+
+    Parameters
+    ----------
+    n_cvs: int
+        Number of components of the CV.
+    mapping_names: Dict[str, List[str]]
+        The node embedding mapping name lists, e.g. the `mapping_names`
+        attribute of a `mlcolvar.pairformer.data.PairDataSet` instance.
+    target_centers : list
+        Centers of the Gaussian targets
+    target_sigmas : list
+        Standard deviations of the Gaussian targets
+    model_name: str
+        Name of the GNN model.
+    model_options: Dict[Any, Any]
+        Model options.
+    extra_loss_options: Dict[Any, Any]
+        Extra loss function options.
+    optimizer_options: Dict[Any, Any]
+        Optimizer options.
+    sync_dist: bool
+        If reduces the metric across devices. Use with care as this may lead to
+        a significant communication overhead.
+
+    References
+    ----------
+    .. [1] E. Trizio and M. Parrinello,
+        'From enhanced sampling to reaction profiles',
+        The Journal of Physical Chemistry Letters 12, 8621– 8626 (2021).
+
+    See also
+    --------
+    mlcolvar.core.loss.TDALoss
+        Distance from a simple Gaussian target distribution.
+    """
+
+    def __init__(
+        self,
+        n_cvs: int,
+        mapping_names: Dict[str, List[str]],
+        target_centers: Union[List[float], List[List[float]]],
+        target_sigmas: Union[List[float], List[List[float]]],
+        model_name: str = 'PairFormerModel',
+        model_options: Dict[Any, Any] = {},
+        extra_loss_options: Dict[Any, Any] = {
+            'alpha': 1.0, 'beta': 100.0, 'gamma': 0.0,
+        },
+        optimizer_options: Dict[Any, Any] = {},
+        sync_dist: bool = True,
+        **kwargs,
+    ) -> None:
+        if model_options.pop('n_out', None) is not None:
+            raise RuntimeError(
+                'The `n_out` key of parameter `model_options` will be ignored!'
+            )
+        if optimizer_options != {}:
+            kwargs['optimizer_options'] = optimizer_options
+
+        super().__init__(
+            n_cvs,
+            mapping_names,
+            model_name,
+            model_options,
+            **kwargs
+        )
+
+        # check size and type of targets
+        if not isinstance(target_centers, torch.Tensor):
+            target_centers = torch.tensor(
+                target_centers, dtype=torch.get_default_dtype()
+            )
+        if not isinstance(target_sigmas, torch.Tensor):
+            target_sigmas = torch.tensor(
+                target_sigmas, dtype=torch.get_default_dtype()
+            )
+
+        self._n_states = target_centers.shape[0]
+        if target_centers.shape != target_sigmas.shape:
+            raise ValueError(
+                'Size of target_centers and target_sigmas should be the same!'
+            )
+        if len(target_centers.shape) == 1:
+            if n_cvs != 1:
+                raise ValueError(
+                    'Size of target_centers at dimension 1 should match the '
+                    + f'number of cvs! Expected 1 found {n_cvs}'
+                )
+        elif len(target_centers.shape) == 2:
+            if n_cvs != target_centers.shape[1]:
+                raise ValueError(
+                    'Size of target_centers at dimension 1 should match the '
+                    + f'number of cvs! Expected {n_cvs} found '
+                    + f'{target_centers.shape[1]}'
+                )
+        elif len(target_centers.shape) > 2:
+            raise ValueError('Too much target_centers dimensions!')
+
+        self._sync_dist = sync_dist
+        self._gamma = extra_loss_options.pop('gamma', 0.0)
+        self.loss_fn = TDALoss(
+            n_states=target_centers.shape[0],
+            target_centers=target_centers,
+            target_sigmas=target_sigmas,
+            **extra_loss_options
+        )
+
+    def training_step(
+        self, train_batch: tg.data.Batch, *args, **kwargs
+    ) -> torch.Tensor:
+        """
+        Compute and return the training loss and record metrics.
+
+        Parameters
+        ----------
+        train_batch: torch_geometric.data.Batch
+            The data batch.
+        """
+        output = self.forward(train_batch.to_dict())
+
+        loss, loss_centers, loss_sigmas = self.loss_fn(
+            output,
+            train_batch.graph_labels.squeeze(),
+            return_loss_terms=True
+        )
+
+        if self.n_cvs > 1:
+            mean = output.mean(dim=0, keepdim=True)
+            cov = output.T @ output / output.shape[0] - mean.T @ mean
+            loss_ortho = torch.trace(
+                (torch.eye(output.shape[1], device=output.device) - cov).T
+                @ (torch.eye(output.shape[1], device=output.device) - cov)
+            ) * self._gamma
+            loss += loss_ortho
+        else:
+            loss_ortho = 0.0
+
+        name = 'train' if self.training else 'valid'
+        self.log(
+            f'{name}_loss',
+            loss,
+            on_step=False,
+            on_epoch=True,
+            sync_dist=self._sync_dist,
+            batch_size=output.shape[0],
+        )
+        self.log(
+            f'{name}_loss_centers',
+            loss_centers,
+            on_step=False,
+            on_epoch=True,
+            sync_dist=self._sync_dist,
+            batch_size=output.shape[0],
+        )
+        self.log(
+            f'{name}_loss_sigmas',
+            loss_sigmas,
+            on_step=False,
+            on_epoch=True,
+            sync_dist=self._sync_dist,
+            batch_size=output.shape[0],
+        )
+        self.log(
+            f'{name}_loss_ortho',
+            loss_ortho,
+            on_step=False,
+            on_epoch=True,
+            sync_dist=self._sync_dist,
+            batch_size=output.shape[0],
+        )
+        return loss
+
+
+def test_deep_tda():
+    torch.manual_seed(0)
+    torch_tools.set_default_dtype('float64')
+
+    data, mapping_names = test_get_data()
+    data['graph_labels'][:2, 0] = 0
+
+    cv = PairDeepTDA(
+        2,
+        mapping_names,
+        [[-1, -1], [1, 1]],
+        [[1, 1], [1, 1]],
+    )
+
+    assert (
+        torch.abs(
+            cv(data)
+            - torch.tensor([[0.771122634223133, -0.2714238083585388]] * 6)
+        ) < 1E-12
+    ).all()
+
+    assert torch.abs(
+        cv.training_step(data) - torch.tensor(405.3366020015101)
+    ) < 1E-12
+
+    try:
+        cv = PairDeepTDA(2, mapping_names, [-1, 1], [1, 1])
+    except ValueError:
+        pass
+    else:
+        raise RuntimeError
+
+    try:
+        cv = PairDeepTDA(2, mapping_names, [[-1, -1], [1, 1]], [1, 1])
+    except ValueError:
+        pass
+    else:
+        raise RuntimeError
+
+
+if __name__ == '__main__':
+    test_deep_tda()
