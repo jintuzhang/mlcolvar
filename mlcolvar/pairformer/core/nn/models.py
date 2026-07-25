@@ -572,7 +572,7 @@ class PairFormerRLModel(BaseModel):
         )
         self.W_p_1 = nn.Sequential(*[
             nn.Linear(n_embedding_pair, n_embedding_pair * 2),
-            nn.ReLU(),
+            pairformer.utils.Squareplus(),
             nn.Linear(n_embedding_pair * 2, n_embedding_pair)
         ])
 
