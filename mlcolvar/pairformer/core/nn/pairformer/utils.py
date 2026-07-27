@@ -910,6 +910,18 @@ def create_local_attn_bias(
     return attn_bias.to(device=device)[:n, :n]
 
 
+def get_activation(activation: str) -> torch.nn.Module:
+    utils = __import__('mlcolvar.pairformer.core.nn.pairformer.utils')
+    if hasattr(utils, activation):
+        return eval(
+            f'mlcolvar.pairformer.core.nn.pairformer.utils.{activation}'
+        )
+    elif hasattr(torch.nn, activation):
+        return eval(f'torch.nn.{activation}')
+    else:
+        raise RuntimeError(f'Unknown activation function: {activation}')
+
+
 class ShiftedSoftplus(torch.nn.Module):
     def __init__(self) -> None:
         super().__init__()

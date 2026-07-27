@@ -108,7 +108,7 @@ class FFNNModel(BaseModel):
         layers = nn.ModuleList()
         for i in range(len(hidden_layers) - 1):
             layers.append(nn.Linear(hidden_layers[i], hidden_layers[i + 1]))
-            layers.append(eval(f'torch.nn.{activation}')())
+            layers.append(pairformer.utils.get_activation(activation)())
         self.layers = layers
         self.cn_layer = None
 
@@ -230,6 +230,8 @@ class PairFormerModel(BaseModel):
         If use a larger readout network. May be useful for CN models.
     basis_type: str
         Type of the basis function.
+    activation: str
+        Name of the activation function (case sensitive).
 
     References
     ----------
@@ -259,7 +261,8 @@ class PairFormerModel(BaseModel):
         cn_options: Optional[Dict[str, Any]] = None,
         residual_update: bool = False,
         larger_w_out: bool = False,
-        basis_type: str = 'gaussian'
+        basis_type: str = 'gaussian',
+        activation: str = 'ShiftedSoftplus',
     ) -> None:
 
         if n_bases <= 0:
@@ -276,6 +279,8 @@ class PairFormerModel(BaseModel):
                 self.embedders.append(
                     torch.nn.Embedding(len(mapping_names[emb]), n_embedding)
                 )
+
+        activation = eval(f'pairformer.utils.{activation}')
 
         self.W_p = torch.nn.Linear(
             n_embedders * n_embedding * 2 + n_embedding_pair, n_embedding_pair
@@ -316,13 +321,13 @@ class PairFormerModel(BaseModel):
         n_in_w_out = n_embedding_pair + n_out_w_c
         self.W_out = nn.Sequential(*[
             nn.Linear(n_in_w_out, n_in_w_out // 2),
-            pairformer.utils.ShiftedSoftplus(),
+            activation(),
             nn.Linear(n_in_w_out // 2, n_out)
         ]) if not larger_w_out else nn.Sequential(*[
             nn.Linear(n_in_w_out, n_in_w_out),
-            pairformer.utils.ShiftedSoftplus(),
+            activation(),
             nn.Linear(n_in_w_out, n_in_w_out // 2),
-            pairformer.utils.ShiftedSoftplus(),
+            activation(),
             nn.Linear(n_in_w_out // 2, n_out)
         ])
 
@@ -512,6 +517,8 @@ class PairFormerRLModel(BaseModel):
         If use a larger readout network. May be useful for CN models.
     basis_type: str
         Type of the basis function.
+    activation: str
+        Name of the activation function (case sensitive).
 
     References
     ----------
@@ -541,7 +548,8 @@ class PairFormerRLModel(BaseModel):
         cn_options: Optional[Dict[str, Any]] = None,
         residual_update: bool = True,
         larger_w_out: bool = False,
-        basis_type: str = 'gaussian'
+        basis_type: str = 'gaussian',
+        activation: str = 'Squareplus',
     ) -> None:
 
         if n_bases <= 0:
@@ -559,6 +567,8 @@ class PairFormerRLModel(BaseModel):
                     torch.nn.Embedding(len(mapping_names[emb]), n_embedding)
                 )
 
+        activation = eval(f'pairformer.utils.{activation}')
+
         if cutoff < 0:
             self.W_x = torch.nn.Linear(1, n_embedding_pair, bias=False)
         else:
@@ -572,7 +582,7 @@ class PairFormerRLModel(BaseModel):
         )
         self.W_p_1 = nn.Sequential(*[
             nn.Linear(n_embedding_pair, n_embedding_pair * 2),
-            pairformer.utils.Squareplus(),
+            activation(),
             nn.Linear(n_embedding_pair * 2, n_embedding_pair)
         ])
 
@@ -603,13 +613,13 @@ class PairFormerRLModel(BaseModel):
         n_in_w_out = n_embedding_pair + n_out_w_c
         self.W_out = nn.Sequential(*[
             nn.Linear(n_in_w_out, n_in_w_out // 2),
-            pairformer.utils.ShiftedSoftplus(),
+            activation(),
             nn.Linear(n_in_w_out // 2, n_out)
         ]) if not larger_w_out else nn.Sequential(*[
             nn.Linear(n_in_w_out, n_in_w_out),
-            pairformer.utils.ShiftedSoftplus(),
+            activation(),
             nn.Linear(n_in_w_out, n_in_w_out // 2),
-            pairformer.utils.ShiftedSoftplus(),
+            activation(),
             nn.Linear(n_in_w_out // 2, n_out)
         ])
 
@@ -790,6 +800,8 @@ class PairBiasModel(BaseModel):
         If use a larger readout network. May be useful for CN models.
     basis_type: str
         Type of the basis function.
+    activation: str
+        Name of the activation function (case sensitive).
 
     References
     ----------
@@ -814,7 +826,8 @@ class PairBiasModel(BaseModel):
         cn_options: Optional[Dict[str, Any]] = None,
         residual_update: bool = True,
         larger_w_out: bool = False,
-        basis_type: str = 'gaussian'
+        basis_type: str = 'gaussian',
+        activation: str = 'ShiftedSoftplus',
     ) -> None:
 
         if n_bases <= 0:
@@ -832,6 +845,8 @@ class PairBiasModel(BaseModel):
                         len(mapping_names[emb]), n_embedding_pair
                     )
                 )
+
+        activation = eval(f'pairformer.utils.{activation}')
 
         self.W_p = torch.nn.Linear(
             n_embedders * n_embedding_pair, n_embedding_pair
@@ -865,13 +880,13 @@ class PairBiasModel(BaseModel):
         n_in_w_out = n_embedding_pair + n_out_w_c
         self.W_out = nn.Sequential(*[
             nn.Linear(n_in_w_out, n_in_w_out // 2),
-            pairformer.utils.ShiftedSoftplus(),
+            activation(),
             nn.Linear(n_in_w_out // 2, n_out)
         ]) if not larger_w_out else nn.Sequential(*[
             nn.Linear(n_in_w_out, n_in_w_out),
-            pairformer.utils.ShiftedSoftplus(),
+            activation(),
             nn.Linear(n_in_w_out, n_in_w_out // 2),
-            pairformer.utils.ShiftedSoftplus(),
+            activation(),
             nn.Linear(n_in_w_out // 2, n_out)
         ])
 
