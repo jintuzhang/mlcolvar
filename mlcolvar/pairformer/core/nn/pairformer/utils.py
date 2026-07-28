@@ -925,6 +925,10 @@ class ShiftedSoftplus(torch.nn.Module):
         super().__init__()
         self.shift = torch.log(torch.tensor(2.0)).item()
 
+    def __repr__(self) -> str:
+        result = 'ShiftedSoftplus(shift=2.0)'
+        return result
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return torch.nn.functional.softplus(x) - self.shift
 
@@ -933,6 +937,10 @@ class Squareplus(torch.nn.Module):
     def __init__(self, b: float = 0.2) -> None:
         super().__init__()
         self.b = torch.tensor(b).item()
+
+    def __repr__(self) -> str:
+        result = 'ShiftedSoftplus(b={:f})'.format(float(self.b))
+        return result
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return 0.5 * (x + torch.sqrt(x ** 2 + self.b))
