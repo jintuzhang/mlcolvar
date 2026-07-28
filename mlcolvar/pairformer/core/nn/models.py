@@ -280,7 +280,7 @@ class PairFormerModel(BaseModel):
                     torch.nn.Embedding(len(mapping_names[emb]), n_embedding)
                 )
 
-        activation = eval(f'pairformer.utils.{activation}')
+        activation = pairformer.utils.get_activation(activation)
 
         self.W_p = torch.nn.Linear(
             n_embedders * n_embedding * 2 + n_embedding_pair, n_embedding_pair
@@ -567,7 +567,7 @@ class PairFormerRLModel(BaseModel):
                     torch.nn.Embedding(len(mapping_names[emb]), n_embedding)
                 )
 
-        activation = eval(f'pairformer.utils.{activation}')
+        activation = pairformer.utils.get_activation(activation)
 
         if cutoff < 0:
             self.W_x = torch.nn.Linear(1, n_embedding_pair, bias=False)
@@ -846,7 +846,7 @@ class PairBiasModel(BaseModel):
                     )
                 )
 
-        activation = eval(f'pairformer.utils.{activation}')
+        activation = pairformer.utils.get_activation(activation)
 
         self.W_p = torch.nn.Linear(
             n_embedders * n_embedding_pair, n_embedding_pair

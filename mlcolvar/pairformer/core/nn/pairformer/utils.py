@@ -911,11 +911,9 @@ def create_local_attn_bias(
 
 
 def get_activation(activation: str) -> torch.nn.Module:
-    utils = __import__('mlcolvar.pairformer.core.nn.pairformer.utils')
+    utils = __import__('mlcolvar').pairformer.core.nn.pairformer.utils
     if hasattr(utils, activation):
-        return eval(
-            f'mlcolvar.pairformer.core.nn.pairformer.utils.{activation}'
-        )
+        return eval(f'utils.{activation}')
     elif hasattr(torch.nn, activation):
         return eval(f'torch.nn.{activation}')
     else:
