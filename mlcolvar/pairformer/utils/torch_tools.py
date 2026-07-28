@@ -121,7 +121,7 @@ def get_distances(
         vectors = vectors + shifts
 
     vectors = vectors.flatten(-4, -2)  # [n_graphs * s_1 * s_2, 3]
-    lengths = torch.linalg.norm(vectors + eps, dim=-1, keepdim=True)
+    lengths = torch.sqrt(torch.sum(vectors ** 2, dim=-1, keepdim=True) + eps)
 
     if normalize:
         vectors = torch.nan_to_num(torch.div(vectors, lengths))
