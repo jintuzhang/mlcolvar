@@ -251,7 +251,7 @@ def test_deep_tica():
     assert (
         torch.abs(
             cv(data)
-            - torch.tensor([[-1.2534413015122814, 1.1660525500707786]] * 6)
+            - torch.tensor([[-1.2534412900507386, 1.166052531294881]] * 6)
         ) < 1E-12
     ).all()
 

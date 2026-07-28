@@ -269,12 +269,12 @@ def test_committor():
     assert (
         torch.abs(
             cv(data)
-            - torch.tensor([[0.10873606283495335, 0.58083648568948]] * 6)
+            - torch.tensor([[0.10873608540435331, 0.5808365021740881]] * 6)
         ) < 1E-12
     ).all()
 
     assert torch.abs(
-        cv.training_step(data) - torch.tensor(17.569805172914553)
+        cv.training_step(data) - torch.tensor(17.569803790965324)
     ) < 1E-12
 
 

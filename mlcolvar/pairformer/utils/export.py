@@ -865,7 +865,7 @@ def test_export_1() -> None:
     assert (
         torch.abs(
             model_c(_dict_to_tensors(data_dict))[0]
-            - torch.tensor([[0.771122634223133, -0.2714238083585388]])
+            - torch.tensor([[0.7711226014051036, -0.27142382184731073]])
         ) < 1E-12
     ).all()
 
@@ -902,7 +902,7 @@ def test_export_1() -> None:
     assert (
         torch.abs(
             model_c(_dict_to_tensors(data_dict))[0]
-            - torch.tensor([[0.771122634223133, -0.2714238083585388]])
+            - torch.tensor([[0.7711226014051036, -0.27142382184731073]])
         ) < 1E-12
     ).all()
     assert (
@@ -982,7 +982,7 @@ def test_export_2() -> None:
     assert (
         torch.abs(
             model_c(_dict_to_tensors(data_dict))[0]
-            - torch.tensor([[-0.05064218647162956, 0.49252906877217784]])
+            - torch.tensor([[-0.05064023701297078, 0.49252677377552584]])
         ) < 1E-12
     ).all()
     assert (

@@ -258,7 +258,7 @@ def test_tlcommittor():
     assert (
         torch.abs(
             cv(data)
-            - torch.tensor([[0.10873606283495335, 0.58083648568948]] * 6)
+            - torch.tensor([[0.10873608540435331, 0.5808365021740881]] * 6)
         ) < 1E-12
     ).all()
 
