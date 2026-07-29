@@ -106,6 +106,7 @@ def get_distances(
             reciprocal = 1.0 / torch.diagonal(cells, dim1=-2, dim2=-1)
             cells_inv = torch.diag_embed(reciprocal)
         else:
+            # FIXME: maybe no transpose?
             cells_inv = torch.linalg.pinv(cells.transpose(2, 1))
 
         positions_1_s = torch.einsum('bki,bij->bkj', positions_1_, cells_inv)
