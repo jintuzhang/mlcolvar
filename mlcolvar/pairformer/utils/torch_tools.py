@@ -356,6 +356,33 @@ def test_get_distances() -> None:
         ])
     ) < 1E-12).all()
 
+    positions.requires_grad_(True)
+    out = get_distances(positions, positions, cells, 1, eps=1E-7)[1]
+    out = out.reshape((3, 3))
+    assert (
+        torch.autograd.grad(out[0, 0], positions, retain_graph=True)[0] == 0
+    ).all()
+    assert (
+        torch.autograd.grad(out[1, 1], positions, retain_graph=True)[0] == 0
+    ).all()
+    assert (
+        torch.autograd.grad(out[2, 2], positions, retain_graph=True)[0] == 0
+    ).all()
+
+    cells = torch.zeros(2, 1)
+    positions.requires_grad_(True)
+    out = get_distances(positions, positions, cells, 1, eps=1E-7)[1]
+    out = out.reshape((3, 3))
+    assert (
+        torch.autograd.grad(out[0, 0], positions, retain_graph=True)[0] == 0
+    ).all()
+    assert (
+        torch.autograd.grad(out[1, 1], positions, retain_graph=True)[0] == 0
+    ).all()
+    assert (
+        torch.autograd.grad(out[2, 2], positions, retain_graph=True)[0] == 0
+    ).all()
+
     torch.set_default_dtype(dtype)
 
 
