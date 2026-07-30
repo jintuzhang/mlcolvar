@@ -106,8 +106,7 @@ def get_distances(
             reciprocal = 1.0 / torch.diagonal(cells, dim1=-2, dim2=-1)
             cells_inv = torch.diag_embed(reciprocal)
         else:
-            # FIXME: maybe no transpose?
-            cells_inv = torch.linalg.pinv(cells.transpose(2, 1))
+            cells_inv = torch.linalg.pinv(cells)
 
         positions_1_s = torch.einsum('bki,bij->bkj', positions_1_, cells_inv)
         positions_2_s = torch.einsum('bki,bij->bkj', positions_2_, cells_inv)
@@ -332,6 +331,12 @@ def test_get_distances() -> None:
             [[0] * 6 + [torch.sqrt(torch.tensor(3.))] * 6],
         ).T < 1E-12
     ).all()
+    out = get_distances(positions_1, positions_2, cells, 2, is_orthogonal=True)
+    assert (
+        out[1] - torch.tensor(
+            [[0] * 6 + [torch.sqrt(torch.tensor(3.))] * 6],
+        ).T < 1E-12
+    ).all()
 
     cells = torch.zeros(2, 1)
     assert (
@@ -344,6 +349,18 @@ def test_get_distances() -> None:
     )
     cells = torch.eye(3) * 0.2
     out = get_distances(positions, positions, cells, 1)
+    assert ((
+        out[1][[1, 2, 3, 5, 6, 7]]
+        - torch.tensor([
+            [0.09899494936611666],
+            [0.09899494936611666],
+            [0.09899494936611666],
+            [0.06000000000000000],
+            [0.09899494936611666],
+            [0.06000000000000000],
+        ])
+    ) < 1E-12).all()
+    out = get_distances(positions, positions, cells, 1, is_orthogonal=True)
     assert ((
         out[1][[1, 2, 3, 5, 6, 7]]
         - torch.tensor([
