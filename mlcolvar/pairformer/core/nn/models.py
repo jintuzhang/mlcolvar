@@ -1093,12 +1093,12 @@ class CNModel(nn.Module):
         c = (lengths - self.d_0) / (self.r_0)
         lengths = torch.div(
             (1 - torch.pow(c, self.n) + 1E-12),
-            (1 - torch.pow(c, self.m) + 2E-12),
+            (1 - torch.pow(c, self.m) + (self.m / self.n) * 1E-12),
         )
         c = (self.d_max - self.d_0) / (self.r_0)
         lengths_max = torch.div(
             (1 - torch.pow(c, self.n) + 1E-12),
-            (1 - torch.pow(c, self.m) + 2E-12),
+            (1 - torch.pow(c, self.m) + (self.m / self.n) * 1E-12),
         )
         lengths = torch.div((lengths - lengths_max), (1 - lengths_max))
 
