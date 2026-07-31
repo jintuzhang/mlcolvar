@@ -1337,6 +1337,19 @@ def test_pairformer() -> None:
         ) < 1E-12
     ).all()
 
+    model = PairFormerModel(
+        2,
+        mapping_names,
+        n_bases=6,
+        cutoff=1.0,
+    )
+    assert (
+        torch.abs(
+            model(data) -
+            torch.tensor([[0.6979908864723334, 0.032536874511407674]] * 6)
+        ) < 1E-12
+    ).all()
+
     data, mapping_names = test_get_data(True)
 
     model = PairFormerModel(
@@ -1390,8 +1403,20 @@ def test_pairformer_rl() -> None:
         ) < 1E-12
     ).all()
 
+    model = PairFormerRLModel(
+        2,
+        mapping_names,
+        n_bases=6,
+        cutoff=1.0,
+    )
+    assert (
+        torch.abs(
+            model(data) -
+            torch.tensor([[0.07942426326831506, 0.2533152695540117]] * 6)
+        ) < 1E-12
+    ).all()
+
     data, mapping_names = test_get_data_rl(True)
-    data['cell'] = torch.zeros((6, 1), dtype=float)
 
     model = PairFormerRLModel(
         2,
@@ -1410,6 +1435,36 @@ def test_pairformer_rl() -> None:
         torch.abs(
             model(data) -
             torch.tensor([[-0.2725030785338258, 0.5047283744377259]] * 6)
+        ) < 1E-12
+    ).all()
+
+    data['cell'] = torch.zeros((6, 1), dtype=float)
+
+    assert (
+        torch.abs(
+            model(data) -
+            torch.tensor([[-0.2725030785338258, 0.5047283744377259]] * 6)
+        ) < 1E-12
+    ).all()
+
+    model = PairFormerRLModel(
+        2,
+        mapping_names,
+        n_bases=6,
+        cutoff=1.0,
+        cn_options={
+            'n': 6,
+            'm': 12,
+            'r_0': 0.09,
+            'd_0': 0,
+            'd_max': 0.1,
+            'n_centers': 1,
+        },
+    )
+    assert (
+        torch.abs(
+            model(data) -
+            torch.tensor([[1.4311351177647944, 1.9343440994329972]] * 6)
         ) < 1E-12
     ).all()
 
@@ -1441,6 +1496,19 @@ def test_pairbias() -> None:
         torch.abs(
             model(data) -
             torch.tensor([[-0.007625490792708173, 0.05461031470587694]] * 6)
+        ) < 1E-12
+    ).all()
+
+    model = PairBiasModel(
+        2,
+        mapping_names,
+        n_bases=6,
+        cutoff=1.0,
+    )
+    assert (
+        torch.abs(
+            model(data) -
+            torch.tensor([[1.5224833706138903, -1.75608038775696]] * 6)
         ) < 1E-12
     ).all()
 
