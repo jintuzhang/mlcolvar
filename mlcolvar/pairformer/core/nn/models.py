@@ -1090,17 +1090,18 @@ class CNModel(nn.Module):
         # decay
         lengths = lengths.flatten()
         distance_masks = lengths > self.d_max
-        c = (lengths - self.d_0) / (self.r_0)
+        c = ((lengths - self.d_0) / (self.r_0)).to(torch.double)
         lengths = torch.div(
             (1 - torch.pow(c, self.n) + 1E-12),
             (1 - torch.pow(c, self.m) + (self.m / self.n) * 1E-12),
         )
-        c = (self.d_max - self.d_0) / (self.r_0)
+        c = ((self.d_max - self.d_0) / (self.r_0)).to(torch.double)
         lengths_max = torch.div(
             (1 - torch.pow(c, self.n) + 1E-12),
             (1 - torch.pow(c, self.m) + (self.m / self.n) * 1E-12),
         )
         lengths = torch.div((lengths - lengths_max), (1 - lengths_max))
+        lengths = lengths.to(torch.get_default_dtype())
 
         # filter padding atoms/atoms beyond d_max
         lengths = lengths * environment_masks_repeat
