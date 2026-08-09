@@ -690,7 +690,8 @@ class PairFormerRLModel(BaseModel):
         n_atoms = len(data['system_masks']) // n_graphs
 
         edges = edges.reshape(n_graphs, n_residues, n_atoms).to(cell.dtype)
-        edges = torch.nan_to_num(edges / edges.sum(-1, keepdim=True))
+        edges_sum = edges.sum(-1, keepdim=True)
+        edges = edges / edges_sum.masked_fill(edges_sum == 0, 1.0)
         pair_masks = pair_masks.reshape(n_graphs, n_residues, n_residues)
         node_attrs = node_attrs.reshape(n_graphs, n_atoms, node_attrs.shape[1])
 
