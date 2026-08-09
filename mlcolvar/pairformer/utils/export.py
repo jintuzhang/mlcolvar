@@ -344,7 +344,7 @@ def _dict_to_tensors(inputs: Dict[str, torch.Tensor]) -> Tuple[torch.Tensor]:
         (
             inputs['system_masks']
             if 'system_masks' in inputs.keys() else torch.tensor(
-                0, device=device, dtype=torch.long
+                0, device=device, dtype=bool
             )
         ),
     )
