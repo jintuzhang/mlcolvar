@@ -257,6 +257,7 @@ def _create_dataset_from_configuration(
         cell = torch.zeros((1, 1), dtype=torch.get_default_dtype())
 
     node_attrs_list = []
+    node_attrs_list_e = []
     if 'atom_names' in mapping_tables.keys():
         table = mapping_tables['atom_names']
         atom_names = config.node_attrs.get('atom_names', None)
@@ -264,12 +265,19 @@ def _create_dataset_from_configuration(
             raise AttributeError(
                 'Can not read the `atom_names` list from configuration!'
             )
+        if len(neighbors) > 0:
+            atom_names_e = [atom_names[i] for i in neighbors]
         if config.system is not None:
             atom_names = [atom_names[i] for i in config.system]
         atomic_numbers = table.names_to_indices(atom_names)
         node_attrs_list.append(
             torch.tensor(atomic_numbers, dtype=torch.long).unsqueeze(-1)
         )
+        if len(neighbors) > 0:
+            atomic_numbers_e = table.names_to_indices(atom_names_e)
+            node_attrs_list_e.append(
+                torch.tensor(atomic_numbers_e, dtype=torch.long).unsqueeze(-1)
+            )
     else:
         raise AttributeError(
             'Can not find the `atom_names` embedding, which is always '
@@ -282,12 +290,19 @@ def _create_dataset_from_configuration(
             raise AttributeError(
                 'Can not read the `residue_name` list from configuration!'
             )
+        if len(neighbors) > 0:
+            residue_names_e = [residue_names[i] for i in neighbors]
         if config.system is not None:
             residue_names = [residue_names[i] for i in config.system]
         residue_indices = table.names_to_indices(residue_names)
         node_attrs_list.append(
             torch.tensor(residue_indices, dtype=torch.long).unsqueeze(-1)
         )
+        if len(neighbors) > 0:
+            residue_indices_e = table.names_to_indices(residue_names_e)
+            node_attrs_list_e.append(
+                torch.tensor(residue_indices_e, dtype=torch.long).unsqueeze(-1)
+            )
 
     node_attrs = torch.zeros(
         (
@@ -297,6 +312,10 @@ def _create_dataset_from_configuration(
         dtype=torch.long,
     )
     node_attrs[:len(node_attrs_list[0]), :] = torch.hstack(node_attrs_list)
+    if len(neighbors) > 0:
+        node_attrs[
+            n_atoms_padded:(n_atoms_padded + len(node_attrs_list_e[0])), :
+        ] = torch.hstack(node_attrs_list_e)
 
     graph_labels = (
         torch.tensor(config.graph_labels, dtype=torch.get_default_dtype())

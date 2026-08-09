@@ -626,7 +626,7 @@ def test_create_dataset_from_trajectories(
         else:
             assert (
                 data['node_attrs'] == torch.tensor([
-                    [2.0, 0.0], [0.0, 0.0], [0.0, 0.0]
+                    [2.0, 0.0], [0.0, 0.0], [1.0, 0.0]
                 ])
             ).all()
 
