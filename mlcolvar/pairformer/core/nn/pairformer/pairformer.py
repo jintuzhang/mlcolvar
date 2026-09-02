@@ -1553,7 +1553,7 @@ def test_pairformer_block() -> None:
     single, pair, mask = build_inputs(2, 2, 2)
     _, outputs = pairformer(s=None, z=pair.clone(), pair_mask=mask)
 
-    assert ((
+    assert (torch.abs(
         outputs - torch.tensor(
             [[[
                 [-0.05670540173976374, 0.7206232278741938],
@@ -1611,7 +1611,7 @@ def test_pairformer_block() -> None:
             s=None, z=pair.clone().to('cuda'), pair_mask=mask.to('cuda')
         )
 
-        assert ((outputs_1 - outputs_1) < tol).all()
+        assert (torch.abs(outputs_1 - outputs_1) < tol).all()
 
 
 if __name__ == '__main__':
