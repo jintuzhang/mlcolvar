@@ -735,7 +735,7 @@ class PairFormerRLModel(BaseModel):
         ))
         embedding_pair = self.W_p_1(embedding_pair * pair_lengths)
         embedding_pair = torch.einsum(
-            'bxi,byi,bijc->bxyc', edges, edges, embedding_pair
+            'bxi,byj,bijc->bxyc', edges, edges, embedding_pair
         )
 
         for layer in self.layers:
@@ -1385,7 +1385,7 @@ def test_pairformer_rl() -> None:
     assert (
         torch.abs(
             model(data) -
-            torch.tensor([[0.013877062244026066, -0.26535510201031187]] * 6)
+            torch.tensor([[0.13047949206007192, -0.29003073278007635]] * 6)
         ) < 1E-12
     ).all()
 
@@ -1393,7 +1393,7 @@ def test_pairformer_rl() -> None:
     assert (
         torch.abs(
             model(data) -
-            torch.tensor([[0.014053657441551662, -0.2635786839281144]] * 6)
+            torch.tensor([[0.13127018415850578, -0.28775644642181225]] * 6)
         ) < 1E-12
     ).all()
 
@@ -1401,7 +1401,7 @@ def test_pairformer_rl() -> None:
     assert (
         torch.abs(
             model(data) -
-            torch.tensor([[0.21165346343712227, -0.17042418138809712]] * 6)
+            torch.tensor([[0.8380119155180464, -0.9252425235108984]] * 6)
         ) < 1E-12
     ).all()
 
@@ -1414,7 +1414,7 @@ def test_pairformer_rl() -> None:
     assert (
         torch.abs(
             model(data) -
-            torch.tensor([[0.07942426326831506, 0.2533152695540117]] * 6)
+            torch.tensor([[0.30854580023660816, 1.1423452868306794]] * 6)
         ) < 1E-12
     ).all()
 
@@ -1436,7 +1436,7 @@ def test_pairformer_rl() -> None:
     assert (
         torch.abs(
             model(data) -
-            torch.tensor([[-0.2725030785338258, 0.5047283744377259]] * 6)
+            torch.tensor([[-0.3064526038615088, 0.5897259064072653]] * 6)
         ) < 1E-12
     ).all()
 
@@ -1445,7 +1445,7 @@ def test_pairformer_rl() -> None:
     assert (
         torch.abs(
             model(data) -
-            torch.tensor([[-0.2725030785338258, 0.5047283744377259]] * 6)
+            torch.tensor([[-0.3064526038615088, 0.5897259064072653]] * 6)
         ) < 1E-12
     ).all()
 
@@ -1466,7 +1466,7 @@ def test_pairformer_rl() -> None:
     assert (
         torch.abs(
             model(data) -
-            torch.tensor([[1.4311351177647944, 1.9343440994329972]] * 6)
+            torch.tensor([[1.5939328373721644, 2.594910549851418]] * 6)
         ) < 1E-12
     ).all()
 
