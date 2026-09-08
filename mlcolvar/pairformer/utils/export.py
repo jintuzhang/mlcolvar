@@ -336,8 +336,8 @@ def _dict_to_tensors(inputs: Dict[str, torch.Tensor]) -> Tuple[torch.Tensor]:
         inputs['environment_masks'],
         inputs['centers'],
         (
-            inputs['residue_adjustency']
-            if 'residue_adjustency' in inputs.keys() else torch.tensor(
+            inputs['residue_adjacency']
+            if 'residue_adjacency' in inputs.keys() else torch.tensor(
                 0, device=device, dtype=torch.long
             )
         ),
@@ -369,7 +369,7 @@ def _tensors_to_dict(inputs: Tuple[torch.Tensor]) -> Dict[str, torch.Tensor]:
         'centers': inputs[11],
     }
     if len(inputs[12].shape) != 0:
-        outputs['residue_adjustency'] = inputs[12]
+        outputs['residue_adjacency'] = inputs[12]
     if len(inputs[13].shape) != 0:
         outputs['system_masks'] = inputs[13]
 

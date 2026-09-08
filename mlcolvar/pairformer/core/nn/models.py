@@ -680,7 +680,7 @@ class PairFormerRLModel(BaseModel):
 
         cell = data['cell']
         pair_masks = data['pair_masks']
-        edges = data['residue_adjustency']
+        edges = data['residue_adjacency']
         system_masks_padded = data['system_masks_padded'].flatten()
         node_attrs = data['node_attrs'][system_masks_padded]
         positions = data['positions'][system_masks_padded]

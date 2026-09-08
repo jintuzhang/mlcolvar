@@ -370,11 +370,11 @@ def _create_dataset_from_configuration(
         )
 
         counter = list(counter.keys())
-        residue_adjustency = torch.zeros(
+        residue_adjacency = torch.zeros(
             (n_residues_padded, n_atoms_padded), dtype=torch.long
         )
         for i, idx in enumerate(residue_id):
-            residue_adjustency[counter.index(idx), i] = 1
+            residue_adjacency[counter.index(idx), i] = 1
         pair_masks = torch.zeros(
             (n_residues_padded, n_residues_padded), dtype=torch.long
         )
@@ -382,7 +382,7 @@ def _create_dataset_from_configuration(
 
         # NOTE: you may ask: what is the use of this extra mask?
         # There is no direct use! However, it provides the correct size of the
-        # system atoms. If we use `residue_adjustency.shape[0]`, Torch v2.9
+        # system atoms. If we use `residue_adjacency.shape[0]`, Torch v2.9
         # will not understand the shape dependency, and will generate the
         # following stupid error:
         # error: use of undeclared identifier 's75'
@@ -392,7 +392,7 @@ def _create_dataset_from_configuration(
         system_masks[:len(positions_system), :] = 1
     else:
         system_masks = None
-        residue_adjustency = None
+        residue_adjacency = None
         pair_masks = torch.zeros(
             (n_atoms_padded, n_atoms_padded), dtype=torch.long
         )
@@ -426,7 +426,7 @@ def _create_dataset_from_configuration(
         # [n_atoms_padded_environment, 1]
         environment_masks=environment_masks,
         # [n_residues_padded, n_atoms_padded]
-        residue_adjustency=residue_adjustency,
+        residue_adjacency=residue_adjacency,
         # [n_atoms_padded, 1]
         system_masks=system_masks,
     )
@@ -804,7 +804,7 @@ def test_from_configurations() -> None:
     )
     for i in range(10):
         assert (
-            dataset[i].residue_adjustency == torch.tensor([
+            dataset[i].residue_adjacency == torch.tensor([
                 [1, 0, 0], [0, 1, 0], [0, 0, 0], [0, 0, 0], [0, 0, 0]
             ])
         ).all()
