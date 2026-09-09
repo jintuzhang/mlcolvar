@@ -1583,6 +1583,7 @@ def test_pairformer_block() -> None:
             dtype = torch.float32
             tol = 1E-6
 
+        torch.manual_seed(0)
         pairformer_1 = PairformerBlock(
             n_heads=1,
             c_z=64,
@@ -1593,6 +1594,7 @@ def test_pairformer_block() -> None:
             triangle_attention='triattention',
         ).eval().to(dtype).to('cuda')
 
+        torch.manual_seed(0)
         pairformer_2 = PairformerBlock(
             n_heads=1,
             c_z=64,
@@ -1611,7 +1613,7 @@ def test_pairformer_block() -> None:
             s=None, z=pair.clone().to('cuda'), pair_mask=mask.to('cuda')
         )
 
-        assert (torch.abs(outputs_1 - outputs_1) < tol).all()
+        assert (torch.abs(outputs_1 - outputs_2) < tol).all()
 
 
 if __name__ == '__main__':
