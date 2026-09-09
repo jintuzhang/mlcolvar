@@ -431,6 +431,12 @@ class PairFormerModel(BaseModel):
             n_graphs, n_atoms, embedding_node.shape[-1]
         )
 
+        # NOTE: see torch_tools.get_distances:
+        # vectors = (
+        #     positions_2_.unsqueeze(1).expand(-1, s_1, -1, -1)
+        #     - positions_1_.unsqueeze(2).expand(-1, -1, s_2, -1)
+        # )  # [n_graphs, s_1, s_2, 3]
+        # vectors = vectors.flatten(-4, -2)  # [n_graphs * s_1 * s_2, 3]
         embedding_pair = self.W_p(torch.cat(
             [
                 embedding_node.unsqueeze(1).expand(-1, n_atoms, -1, -1),
@@ -726,6 +732,12 @@ class PairFormerRLModel(BaseModel):
             n_graphs, n_atoms, embedding_node.shape[-1]
         )
 
+        # NOTE: see torch_tools.get_distances:
+        # vectors = (
+        #     positions_2_.unsqueeze(1).expand(-1, s_1, -1, -1)
+        #     - positions_1_.unsqueeze(2).expand(-1, -1, s_2, -1)
+        # )  # [n_graphs, s_1, s_2, 3]
+        # vectors = vectors.flatten(-4, -2)  # [n_graphs * s_1 * s_2, 3]
         embedding_pair = self.W_p(torch.cat(
             [
                 embedding_node.unsqueeze(1).expand(-1, n_atoms, -1, -1),
