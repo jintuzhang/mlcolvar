@@ -226,6 +226,7 @@ class ExportableCommittor(torch.nn.Module):
             retain_graph=False,
             create_graph=False,
             allow_unused=True,
+            materialize_grads=True,
         )[0]
 
         gradients_z = gradients_z.unsqueeze(0)
