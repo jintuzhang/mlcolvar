@@ -121,7 +121,7 @@ class PairTimeLaggedCommittor(PairBaseCV):
         if not self._exporting:
             data['positions'].requires_grad_(True)
 
-        return self._model(data, return_lengths)
+        return self._model(data, return_lengths=return_lengths)
 
     def forward(
         self,
