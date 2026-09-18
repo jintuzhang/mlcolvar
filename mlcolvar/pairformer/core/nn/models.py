@@ -1027,22 +1027,57 @@ class CNModel(nn.Module):
     Parameters
     ----------
     n: int
-        The n parameter of the switching function.
+        The n parameter of the rational switching function,
+        denominator of the Fermi width m / n.
     m: int
-        The m parameter of the switching function.
+        The m parameter of the rational switching function,
+        numerator of the Fermi width m / n.
     r_0: float
-        The r_0 parameter of the switching function.
+        The r_0 parameter of the both switching function,
     d_0: float
-        The d_0 parameter of the switching function.
+        The d_0 parameter of the both switching functions.
     d_max: float
         The d_max parameter of the switching function.
+    switching_function: str
+        Type of the switching function.
+    cutoff_start: float
+        Start of the Fermi cutoff envelope.
     """
 
     def __init__(
-        self, n: int, m: int, r_0: float, d_0: float, d_max: float,
+        self,
+        n: int,
+        m: int,
+        r_0: float,
+        d_0: float,
+        d_max: float,
+        switching_function: str = 'rational',
+        cutoff_start: float = 0.8,
     ) -> None:
 
         super().__init__()
+
+        assert switching_function in ['rational', 'fermi'], (
+            'The switching function parameter could only be rational or fermi!'
+        )
+
+        if switching_function == 'rational':
+            assert m > n, 'For rational switch, m should be larger than n!'
+        elif switching_function == 'fermi':
+            if any(
+                not np.isfinite(p) or p <= 0 or int(p) != p for p in (n, m)
+            ):
+                raise ValueError('Fermi n and m must be positive integers!')
+            if not all(np.isfinite(p) for p in (r_0, d_0, d_max, r_0 + d_0)):
+                raise ValueError('Fermi distance parameters must be finite!')
+            if r_0 + d_0 <= 0:
+                raise ValueError('Fermi midpoint r_0 + d_0 must be positive!')
+            if d_max <= 0:
+                raise ValueError('Fermi d_max must be positive!')
+            if not np.isfinite(cutoff_start) or not 0 < cutoff_start < 1:
+                raise ValueError(
+                    'For Fermi switch, require 0 < cutoff_start < 1!'
+                )
 
         self.register_buffer(
             'n', torch.tensor(n, dtype=torch.long)
@@ -1059,6 +1094,16 @@ class CNModel(nn.Module):
         self.register_buffer(
             'd_max', torch.tensor(d_max, dtype=torch.get_default_dtype())
         )
+
+        if switching_function == 'fermi':
+
+            self.register_buffer(
+                'cutoff_start',
+                torch.tensor(cutoff_start, dtype=torch.get_default_dtype()),
+            )
+            self.cutoff_fn = radial.PolynomialCutoff(cutoff=1.0, p=3).double()
+
+        self._switching_function = switching_function
 
     def forward(self, data: Dict[str, torch.Tensor]) -> torch.Tensor:
         """
@@ -1092,28 +1137,50 @@ class CNModel(nn.Module):
         )
 
         # distances
-        _, lengths = torch_tools.get_distances(
+        vectors, lengths = torch_tools.get_distances(
             positions_1=data['positions'][system_masks_padded],
             positions_2=positions_center,
             cells=cell,
             n_graphs=n_graphs,
             eps=1E-7,
+            normalize=self._switching_function != 'fermi',
         )
 
         # decay
         lengths = lengths.flatten()
         distance_masks = lengths > self.d_max
-        c = ((lengths - self.d_0) / (self.r_0)).to(torch.double)
-        lengths = torch.div(
-            (1 - torch.pow(c, self.n) + 1E-12),
-            (1 - torch.pow(c, self.m) + (self.m / self.n) * 1E-12),
-        )
-        c = ((self.d_max - self.d_0) / (self.r_0)).to(torch.double)
-        lengths_max = torch.div(
-            (1 - torch.pow(c, self.n) + 1E-12),
-            (1 - torch.pow(c, self.m) + (self.m / self.n) * 1E-12),
-        )
-        lengths = torch.div((lengths - lengths_max), (1 - lengths_max))
+
+        if self._switching_function == 'rational':
+
+            c = ((lengths - self.d_0) / (self.r_0)).to(torch.double)
+            lengths = torch.div(
+                (1 - torch.pow(c, self.n) + 1E-12),
+                (1 - torch.pow(c, self.m) + (self.m / self.n) * 1E-12),
+            )
+            c = ((self.d_max - self.d_0) / (self.r_0)).to(torch.double)
+            lengths_max = torch.div(
+                (1 - torch.pow(c, self.n) + 1E-12),
+                (1 - torch.pow(c, self.m) + (self.m / self.n) * 1E-12),
+            )
+
+            lengths = torch.div((lengths - lengths_max), (1 - lengths_max))
+
+        elif self._switching_function == 'fermi':
+
+            d = lengths.to(torch.double)
+            q = self.m.to(torch.double) / self.n.to(torch.double)
+            m = self.r_0.to(torch.double) + self.d_0.to(torch.double)
+            d_max = self.d_max.to(torch.double)
+            d_max_start = self.cutoff_start.to(torch.double) * d_max
+
+            # for 2nd gradients we use vectors
+            d_2 = vectors.to(torch.double).square().sum(dim=-1)
+            lengths = torch.sigmoid((m.square() - d_2) / (2 * m * q))
+
+            # smooth
+            progress = ((d - d_max_start) / (d_max - d_max_start))
+            lengths = lengths * self.cutoff_fn(progress.clamp(min=0, max=1))
+
         lengths = lengths.to(torch.get_default_dtype())
 
         # filter padding atoms/atoms beyond d_max
@@ -1494,6 +1561,15 @@ def test_cn() -> None:
         torch.abs(
             model(data) -
             torch.tensor([[0.04242341321389491]] * 6)
+        ) < 1E-12
+    ).all()
+
+    model = CNModel(6, 12, 0.09, 0.0, 0.1, switching_function='fermi')
+
+    assert (
+        torch.abs(
+            model(data) -
+            torch.tensor([[0.001170804271369301]] * 6)
         ) < 1E-12
     ).all()
 
