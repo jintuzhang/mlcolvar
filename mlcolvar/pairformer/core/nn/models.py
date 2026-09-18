@@ -1152,7 +1152,9 @@ class CNModel(nn.Module):
 
         if self._switching_function == 'rational':
 
+            plateau_masks = lengths <= self.d_0
             c = ((lengths - self.d_0) / (self.r_0)).to(torch.double)
+            c = c.clamp(min=0)
             lengths = torch.div(
                 (1 - torch.pow(c, self.n) + 1E-12),
                 (1 - torch.pow(c, self.m) + (self.m / self.n) * 1E-12),
@@ -1164,6 +1166,7 @@ class CNModel(nn.Module):
             )
 
             lengths = torch.div((lengths - lengths_max), (1 - lengths_max))
+            lengths[plateau_masks] = 1.0
 
         elif self._switching_function == 'fermi':
 
@@ -1572,6 +1575,22 @@ def test_cn() -> None:
             torch.tensor([[0.001170804271369301]] * 6)
         ) < 1E-12
     ).all()
+
+    data['positions'] = data['positions'].detach().clone().requires_grad_(True)
+    for n, m in ((2, 6), (6, 12)):
+        model = CNModel(n, m, 0.09, 0.11, 0.2)
+        result = model(data)
+        assert torch.equal(result, torch.full_like(result, 2.0))
+        gradients = torch.autograd.grad(
+            result.sum(), data['positions'], create_graph=True
+        )[0]
+        assert torch.equal(gradients, torch.zeros_like(gradients))
+        second_gradients = torch.autograd.grad(
+            gradients.sum(), data['positions']
+        )[0]
+        assert torch.equal(
+            second_gradients, torch.zeros_like(second_gradients)
+        )
 
 
 def test_pairbias() -> None:
