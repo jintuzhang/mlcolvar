@@ -121,7 +121,7 @@ class PairTimeLaggedCommittor(PairBaseCV):
         if not self._exporting:
             data['positions'].requires_grad_(True)
 
-        return self._model(data, return_lengths)
+        return self._model(data, return_lengths=return_lengths)
 
     def forward(
         self,
@@ -258,7 +258,7 @@ def test_tlcommittor():
     assert (
         torch.abs(
             cv(data)
-            - torch.tensor([[0.10873606283495335, 0.58083648568948]] * 6)
+            - torch.tensor([[0.10873608540435331, 0.5808365021740881]] * 6)
         ) < 1E-12
     ).all()
 

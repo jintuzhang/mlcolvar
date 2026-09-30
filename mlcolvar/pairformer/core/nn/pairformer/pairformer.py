@@ -1357,7 +1357,10 @@ class PairformerBlock(nn.Module):
             c_hidden=c_hidden_pair_att,
             no_heads=no_heads_pair,
         )
-        self.dropout_row = DropoutRowwise(dropout)
+        if dropout > 0:
+            self.dropout_row = DropoutRowwise(dropout)
+        else:
+            self.dropout_row = nn.Identity()
         if pair_transition:
             self.pair_transition = Transition(c_in=c_z, n=4)
         else:
@@ -1550,7 +1553,7 @@ def test_pairformer_block() -> None:
     single, pair, mask = build_inputs(2, 2, 2)
     _, outputs = pairformer(s=None, z=pair.clone(), pair_mask=mask)
 
-    assert ((
+    assert (torch.abs(
         outputs - torch.tensor(
             [[[
                 [-0.05670540173976374, 0.7206232278741938],
@@ -1580,6 +1583,7 @@ def test_pairformer_block() -> None:
             dtype = torch.float32
             tol = 1E-6
 
+        torch.manual_seed(0)
         pairformer_1 = PairformerBlock(
             n_heads=1,
             c_z=64,
@@ -1590,6 +1594,7 @@ def test_pairformer_block() -> None:
             triangle_attention='triattention',
         ).eval().to(dtype).to('cuda')
 
+        torch.manual_seed(0)
         pairformer_2 = PairformerBlock(
             n_heads=1,
             c_z=64,
@@ -1608,7 +1613,7 @@ def test_pairformer_block() -> None:
             s=None, z=pair.clone().to('cuda'), pair_mask=mask.to('cuda')
         )
 
-        assert ((outputs_1 - outputs_1) < tol).all()
+        assert (torch.abs(outputs_1 - outputs_2) < tol).all()
 
 
 if __name__ == '__main__':

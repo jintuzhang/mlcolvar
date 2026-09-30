@@ -405,10 +405,14 @@ def test_committor_loss() -> None:
     q = data['positions'][:, 0] * 0.5
     results = loss(data, q)
 
-    assert results[0] - torch.log(torch.tensor(1 / 2) ** 2) - 200 < 1E-12
-    assert results[1] - torch.log(torch.tensor(1 / 2) ** 2) < 1E-12
-    assert results[2] - 100.0 < 1E-12
-    assert results[3] - 100.0 < 1E-12
+    assert torch.abs(
+        results[0] - torch.log(torch.tensor(1 / 2) ** 2) - 200
+    ) < 1E-12
+    assert torch.abs(
+        results[1] - torch.log(torch.tensor(1 / 2) ** 2)
+    ) < 1E-12
+    assert torch.abs(results[2] - 100.0) < 1E-12
+    assert torch.abs(results[3] - 100.0) < 1E-12
 
 
 def test_compute_committor_weights() -> None:
@@ -425,8 +429,9 @@ def test_compute_committor_weights() -> None:
     z = (torch.e * 2 + 2) / 4
 
     assert (
-        weights - torch.tensor([1.0] * 2 + [1 / z] * 2 + [torch.e / z] * 2)
-        < 1E-12
+        torch.abs(
+            weights - torch.tensor([1.0] * 2 + [1 / z] * 2 + [torch.e / z] * 2)
+        ) < 1E-12
     ).all()
 
 

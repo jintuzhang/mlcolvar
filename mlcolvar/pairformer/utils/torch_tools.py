@@ -106,7 +106,7 @@ def get_distances(
             reciprocal = 1.0 / torch.diagonal(cells, dim1=-2, dim2=-1)
             cells_inv = torch.diag_embed(reciprocal)
         else:
-            cells_inv = torch.linalg.pinv(cells.transpose(2, 1))
+            cells_inv = torch.linalg.pinv(cells)
 
         positions_1_s = torch.einsum('bki,bij->bkj', positions_1_, cells_inv)
         positions_2_s = torch.einsum('bki,bij->bkj', positions_2_, cells_inv)
@@ -121,7 +121,7 @@ def get_distances(
         vectors = vectors + shifts
 
     vectors = vectors.flatten(-4, -2)  # [n_graphs * s_1 * s_2, 3]
-    lengths = torch.linalg.norm(vectors + eps, dim=-1, keepdim=True)
+    lengths = torch.sqrt(torch.sum(vectors ** 2, dim=-1, keepdim=True) + eps)
 
     if normalize:
         vectors = torch.nan_to_num(torch.div(vectors, lengths))
@@ -292,23 +292,25 @@ def test_get_centers() -> None:
     )
 
     assert (
-        get_centers(positions, indices) - torch.tensor([
-            [9.5190000000000, 12.4710000000000, 11.2360000000000,],
-            [16.5020000000000, 7.2725000000000, 6.8285000000000,],
-            [13.1860000000000, 8.6986666666667, 9.3196666666667,],
-            [2.6590000000000, 14.3230000000000, 4.0370000000000,],
-            [10.9430000000000, 14.7800000000000, 8.7495000000000,],
-            [8.3873333333333, 14.5693333333333,  6.8346666666667,],
-            [2.1530000000000, 4.5080000000000, 9.7090000000000,],
-            [7.5500000000000, 13.5145000000000, 1.8555000000000,],
-            [5.4433333333333, 10.4110000000000, 4.6916666666667,],
-            [12.4085000000000, 11.9950000000000, 10.5830000000000,],
-            [8.2970000000000, 12.5930000000000, 4.3475000000000,],
-            [9.1156666666667, 11.6243333333333, 6.8153333333333,],
-            [6.5130000000000, 5.8975000000000, 15.2420000000000,],
-            [11.8235000000000, 8.4900000000000, 11.2080000000000,],
-            [10.4076666666667, 7.3436666666667, 12.5680000000000,],
-        ]) < 1E-12
+        torch.abs(
+            get_centers(positions, indices) - torch.tensor([
+                [9.5190000000000, 12.4710000000000, 11.2360000000000,],
+                [16.5020000000000, 7.2725000000000, 6.8285000000000,],
+                [13.1860000000000, 8.6986666666667, 9.3196666666667,],
+                [2.6590000000000, 14.3230000000000, 4.0370000000000,],
+                [10.9430000000000, 14.7800000000000, 8.7495000000000,],
+                [8.3873333333333, 14.5693333333333,  6.8346666666667,],
+                [2.1530000000000, 4.5080000000000, 9.7090000000000,],
+                [7.5500000000000, 13.5145000000000, 1.8555000000000,],
+                [5.4433333333333, 10.4110000000000, 4.6916666666667,],
+                [12.4085000000000, 11.9950000000000, 10.5830000000000,],
+                [8.2970000000000, 12.5930000000000, 4.3475000000000,],
+                [9.1156666666667, 11.6243333333333, 6.8153333333333,],
+                [6.5130000000000, 5.8975000000000, 15.2420000000000,],
+                [11.8235000000000, 8.4900000000000, 11.2080000000000,],
+                [10.4076666666667, 7.3436666666667, 12.5680000000000,],
+            ])
+        ) < 1E-12
     ).all()
 
     torch.set_default_dtype(dtype)
@@ -327,14 +329,27 @@ def test_get_distances() -> None:
 
     out = get_distances(positions_1, positions_2, cells, 2)
     assert (
-        out[1] - torch.tensor(
-            [[0] * 6 + [torch.sqrt(torch.tensor(3.))] * 6],
-        ).T < 1E-12
+        torch.abs(
+            out[1] - torch.tensor(
+                [[0] * 6 + [torch.sqrt(torch.tensor(3.)) / 10] * 6],
+            ).T
+        ) < 1E-12
+    ).all()
+    out = get_distances(positions_1, positions_2, cells, 2, is_orthogonal=True)
+    assert (
+        torch.abs(
+            out[1] - torch.tensor(
+                [[0] * 6 + [torch.sqrt(torch.tensor(3.)) / 10] * 6],
+            ).T
+        ) < 1E-12
     ).all()
 
     cells = torch.zeros(2, 1)
+    out = get_distances(positions_1, positions_2, cells, 2)
     assert (
-        out[1] - torch.tensor([[torch.sqrt(torch.tensor(3.))] * 12]).T < 1E-12
+        torch.abs(
+            out[1] - torch.tensor([[torch.sqrt(torch.tensor(3.))] * 12]).T
+        ) < 1E-12
     ).all()
 
     positions = torch.tensor(
@@ -343,17 +358,60 @@ def test_get_distances() -> None:
     )
     cells = torch.eye(3) * 0.2
     out = get_distances(positions, positions, cells, 1)
-    assert ((
-        out[1][[1, 2, 3, 5, 6, 7]]
-        - torch.tensor([
-            [0.09899494936611666],
-            [0.09899494936611666],
-            [0.09899494936611666],
-            [0.06000000000000000],
-            [0.09899494936611666],
-            [0.06000000000000000],
-        ])
-    ) < 1E-12).all()
+    assert (
+        torch.abs(
+            out[1][[1, 2, 3, 5, 6, 7]]
+            - torch.tensor([
+                [0.09899494936611666],
+                [0.09899494936611666],
+                [0.09899494936611666],
+                [0.06000000000000000],
+                [0.09899494936611666],
+                [0.06000000000000000],
+            ])
+        ) < 1E-12
+    ).all()
+    out = get_distances(positions, positions, cells, 1, is_orthogonal=True)
+    assert (
+        torch.abs(
+            out[1][[1, 2, 3, 5, 6, 7]]
+            - torch.tensor([
+                [0.09899494936611666],
+                [0.09899494936611666],
+                [0.09899494936611666],
+                [0.06000000000000000],
+                [0.09899494936611666],
+                [0.06000000000000000],
+            ])
+        ) < 1E-12
+    ).all()
+
+    positions.requires_grad_(True)
+    out = get_distances(positions, positions, cells, 1, eps=1E-7)[1]
+    out = out.reshape((3, 3))
+    assert (
+        torch.autograd.grad(out[0, 0], positions, retain_graph=True)[0] == 0
+    ).all()
+    assert (
+        torch.autograd.grad(out[1, 1], positions, retain_graph=True)[0] == 0
+    ).all()
+    assert (
+        torch.autograd.grad(out[2, 2], positions, retain_graph=True)[0] == 0
+    ).all()
+
+    cells = torch.zeros(2, 1)
+    positions.requires_grad_(True)
+    out = get_distances(positions, positions, cells, 1, eps=1E-7)[1]
+    out = out.reshape((3, 3))
+    assert (
+        torch.autograd.grad(out[0, 0], positions, retain_graph=True)[0] == 0
+    ).all()
+    assert (
+        torch.autograd.grad(out[1, 1], positions, retain_graph=True)[0] == 0
+    ).all()
+    assert (
+        torch.autograd.grad(out[2, 2], positions, retain_graph=True)[0] == 0
+    ).all()
 
     torch.set_default_dtype(dtype)
 

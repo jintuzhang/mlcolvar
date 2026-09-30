@@ -2,12 +2,19 @@ import torch
 from torch import nn
 import numpy as np
 import torch_geometric as tg
+from warnings import warn
 from typing import List, Dict, Optional, Any, Tuple, Union
 
 from mlcolvar.pairformer import data as pdata
 from mlcolvar.pairformer.core.nn import radial
 from mlcolvar.pairformer.core.nn import pairformer
 from mlcolvar.pairformer.utils import torch_tools
+
+try:
+    from mlcolvar.pairformer.core.nn import pair_bias_attention as pba
+except ImportError as e:
+    warn('Cannot import the PairBiasAttention model, reason: ' + str(e))
+
 
 """
 PairFormer models.
@@ -101,7 +108,7 @@ class FFNNModel(BaseModel):
         layers = nn.ModuleList()
         for i in range(len(hidden_layers) - 1):
             layers.append(nn.Linear(hidden_layers[i], hidden_layers[i + 1]))
-            layers.append(eval(f'torch.nn.{activation}')())
+            layers.append(pairformer.utils.get_activation(activation)())
         self.layers = layers
         self.cn_layer = None
 
@@ -221,6 +228,10 @@ class PairFormerModel(BaseModel):
         If apply residual update.
     larger_w_out: bool
         If use a larger readout network. May be useful for CN models.
+    basis_type: str
+        Type of the basis function.
+    activation: str
+        Name of the activation function (case sensitive).
 
     References
     ----------
@@ -250,12 +261,14 @@ class PairFormerModel(BaseModel):
         cn_options: Optional[Dict[str, Any]] = None,
         residual_update: bool = False,
         larger_w_out: bool = False,
+        basis_type: str = 'gaussian',
+        activation: str = 'ShiftedSoftplus',
     ) -> None:
 
         if n_bases <= 0:
             n_bases = n_embedding_pair
 
-        super().__init__(n_out, cutoff, n_bases, n_polynomials, 'gaussian')
+        super().__init__(n_out, cutoff, n_bases, n_polynomials, basis_type)
 
         n_embedding = n_embedding_pair // 2
         n_embedders = len(mapping_names.keys())
@@ -266,6 +279,8 @@ class PairFormerModel(BaseModel):
                 self.embedders.append(
                     torch.nn.Embedding(len(mapping_names[emb]), n_embedding)
                 )
+
+        activation = pairformer.utils.get_activation(activation)
 
         self.W_p = torch.nn.Linear(
             n_embedders * n_embedding * 2 + n_embedding_pair, n_embedding_pair
@@ -306,13 +321,13 @@ class PairFormerModel(BaseModel):
         n_in_w_out = n_embedding_pair + n_out_w_c
         self.W_out = nn.Sequential(*[
             nn.Linear(n_in_w_out, n_in_w_out // 2),
-            pairformer.utils.ShiftedSoftplus(),
+            activation(),
             nn.Linear(n_in_w_out // 2, n_out)
         ]) if not larger_w_out else nn.Sequential(*[
             nn.Linear(n_in_w_out, n_in_w_out),
-            pairformer.utils.ShiftedSoftplus(),
+            activation(),
             nn.Linear(n_in_w_out, n_in_w_out // 2),
-            pairformer.utils.ShiftedSoftplus(),
+            activation(),
             nn.Linear(n_in_w_out // 2, n_out)
         ])
 
@@ -416,6 +431,12 @@ class PairFormerModel(BaseModel):
             n_graphs, n_atoms, embedding_node.shape[-1]
         )
 
+        # NOTE: see torch_tools.get_distances:
+        # vectors = (
+        #     positions_2_.unsqueeze(1).expand(-1, s_1, -1, -1)
+        #     - positions_1_.unsqueeze(2).expand(-1, -1, s_2, -1)
+        # )  # [n_graphs, s_1, s_2, 3]
+        # vectors = vectors.flatten(-4, -2)  # [n_graphs * s_1 * s_2, 3]
         embedding_pair = self.W_p(torch.cat(
             [
                 embedding_node.unsqueeze(1).expand(-1, n_atoms, -1, -1),
@@ -449,6 +470,556 @@ class PairFormerModel(BaseModel):
             return self.W_out(out)
 
 
+class PairFormerRLModel(BaseModel):
+    """
+    The residue-level PairFormer model used in AlphaFold 3 [1].
+
+    Parameters
+    ----------
+    n_out: int
+        Size of the output node features.
+    mapping_names: Dict[str, List[str]]
+        The node embedding mapping name lists, e.g. the `mapping_names`
+        attribute of a `mlcolvar.pairformer.data.PairDataSet` instance.
+    cutoff: float
+        Cutoff radius of the basis functions. If a negative value is given,
+        will not use radial basis functions to expand distances.
+    constant_d: float
+        Constant used in distance basis: 1.0 / (constant_d + d ** 2).
+    n_bases: int
+        Size of the basis set.
+    n_layers: int
+        Number of interaction layers.
+    n_heads_apb: int
+        Number of attention heads in AttentionPairBias.
+    n_heads_pair: int
+        Number of attention heads in TriangleAttention.
+    n_embedding_pair: int
+        Size of the pair embedding array.
+    n_hidden_channels_mul: int
+        Size of the hidden channels in TriangleMultiplicationOutgoing.
+    n_hidden_channels_pair: int
+        Size of the hidden channels in TriangleAttention.
+    drop_rate: float
+        Drop probability in all dropout layers.
+    triangle_attention: str
+        Type of the triangle attention implementation. Valid options are:
+        - 'triattention': Optimized tri-attention module
+        - 'torch': PyTorch native implementation
+        Note that when applying the model in Committor tasks, this option HAS
+        to be 'torch'.
+    triangle_multiplicative: Triangle multiplicative implementation type.
+        - 'torch': PyTorch native implementation
+        - None: Disable triangle update
+    pair_transition: bool
+        If apply pair transition.
+    n_polynomials: int
+        Order of the polynomials in the basis functions.
+    cn_options: Dict[str, Union[int, float]]
+        CN model options.
+    residual_update: bool
+        If apply residual update.
+    larger_w_out: bool
+        If use a larger readout network. May be useful for CN models.
+    basis_type: str
+        Type of the basis function.
+    activation: str
+        Name of the activation function (case sensitive).
+
+    References
+    ----------
+    .. [1] Abramson, Josh, et al. "Accurate structure prediction of
+        biomolecular interactions with AlphaFold 3."
+        Nature 630.8016 (2024): 493-500.
+    """
+
+    def __init__(
+        self,
+        n_out: int,
+        mapping_names: Dict[str, List[str]],
+        cutoff: float = -1.0,
+        constant_d: float = 1.0,
+        n_bases: int = 0,
+        n_layers: int = 1,
+        n_heads_apb: int = 1,
+        n_heads_pair: int = 1,
+        n_embedding_pair: int = 8,
+        n_hidden_channels_mul: int = 16,
+        n_hidden_channels_pair: int = 16,
+        drop_rate: float = 0.0,
+        triangle_attention: str = 'torch',
+        triangle_multiplicative: Optional[str] = None,
+        pair_transition: bool = False,
+        n_polynomials: int = 0,
+        cn_options: Optional[Dict[str, Any]] = None,
+        residual_update: bool = True,
+        larger_w_out: bool = False,
+        basis_type: str = 'gaussian',
+        activation: str = 'Squareplus',
+    ) -> None:
+
+        if n_bases <= 0:
+            n_bases = n_embedding_pair
+
+        super().__init__(n_out, cutoff, n_bases, n_polynomials, basis_type)
+
+        n_embedding = n_embedding_pair // 2
+        n_embedders = len(mapping_names.keys())
+
+        self.embedders = torch.nn.ModuleList([])
+        for emb in pdata.dataset.__implemented_embeddings__:
+            if emb in mapping_names.keys():
+                self.embedders.append(
+                    torch.nn.Embedding(len(mapping_names[emb]), n_embedding)
+                )
+
+        activation = pairformer.utils.get_activation(activation)
+
+        if cutoff < 0:
+            self.W_x = torch.nn.Linear(1, n_embedding_pair, bias=False)
+        else:
+            self.W_x = None
+        if cutoff > 0 and n_bases != n_embedding_pair:
+            self.W_b = torch.nn.Linear(n_bases, n_embedding_pair, bias=False)
+        else:
+            self.W_b = None
+        self.W_p = torch.nn.Linear(
+            n_embedders * n_embedding * 2, n_embedding_pair
+        )
+        self.W_p_1 = nn.Sequential(*[
+            nn.Linear(n_embedding_pair, n_embedding_pair * 2),
+            activation(),
+            nn.Linear(n_embedding_pair * 2, n_embedding_pair)
+        ])
+
+        self.layers = torch.nn.ModuleList([
+            pairformer.PairformerBlock(
+                n_heads=n_heads_apb,
+                c_z=n_embedding_pair,
+                c_s=0,
+                c_hidden_mul=n_hidden_channels_mul,
+                c_hidden_pair_att=n_hidden_channels_pair,
+                no_heads_pair=n_heads_pair,
+                dropout=drop_rate,
+                triangle_multiplicative=triangle_multiplicative,
+                triangle_attention=triangle_attention,
+                pair_transition=pair_transition,
+            ) for _ in range(n_layers)
+        ])
+
+        if cn_options is not None:
+            n_out_w_c = cn_options.pop('n_centers') * 2
+            self.cn_layer = CNModel(**cn_options)
+            self.W_c = torch.nn.Linear(n_out_w_c // 2, n_out_w_c)
+        else:
+            n_out_w_c = 0
+            self.cn_layer = None
+            self.W_c = None
+
+        n_in_w_out = n_embedding_pair + n_out_w_c
+        self.W_out = nn.Sequential(*[
+            nn.Linear(n_in_w_out, n_in_w_out // 2),
+            activation(),
+            nn.Linear(n_in_w_out // 2, n_out)
+        ]) if not larger_w_out else nn.Sequential(*[
+            nn.Linear(n_in_w_out, n_in_w_out),
+            activation(),
+            nn.Linear(n_in_w_out, n_in_w_out // 2),
+            activation(),
+            nn.Linear(n_in_w_out // 2, n_out)
+        ])
+
+        self._larger_w_out = larger_w_out
+        self._residual_update = residual_update
+        self._mapping_names = mapping_names
+        self._n_embedding_pair = n_embedding_pair
+        self._n_centers = n_out_w_c // 2
+        self._c_d = constant_d
+
+        self.reset_parameters()
+
+    def reset_parameters(self) -> None:
+
+        for m in self.layers:
+            m.reset_parameters()
+
+        nn.init.xavier_uniform_(self.W_out[0].weight)
+        self.W_out[0].bias.data.fill_(0)
+        nn.init.xavier_uniform_(self.W_out[2].weight)
+        self.W_out[2].bias.data.fill_(0)
+        nn.init.xavier_uniform_(self.W_p.weight)
+        self.W_p.bias.data.fill_(0)
+        nn.init.xavier_uniform_(self.W_p_1[0].weight)
+        self.W_p_1[0].bias.data.fill_(0)
+        nn.init.xavier_uniform_(self.W_p_1[2].weight)
+        self.W_p_1[2].bias.data.fill_(0)
+        if self._larger_w_out:
+            nn.init.xavier_uniform_(self.W_out[4].weight)
+            self.W_out[4].bias.data.fill_(0)
+        if self.W_x is not None:
+            nn.init.xavier_uniform_(self.W_x.weight)
+        if self.W_b is not None:
+            nn.init.xavier_uniform_(self.W_b.weight)
+        if self.W_c is not None:
+            nn.init.xavier_uniform_(self.W_c.weight)
+            self.W_c.bias.data.fill_(0)
+
+    def forward(
+        self,
+        data: Dict[str, torch.Tensor],
+        scatter_mean: bool = True,
+        return_lengths: bool = False,
+    ) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
+        """
+        The forward pass.
+
+        Parameters
+        ----------
+        data: Dict[str, torch.Tensor]
+            The data dict. Usually came from the `to_dict` method of a
+            `torch_geometric.data.Batch` object.
+        scatter_mean: bool
+            If perform the scatter mean to the model output.
+        return_lengths: bool
+            If return distances for gradient calculations.
+        """
+
+        cell = data['cell']
+        pair_masks = data['pair_masks']
+        edges = data['residue_adjacency']
+        system_masks_padded = data['system_masks_padded'].flatten()
+        node_attrs = data['node_attrs'][system_masks_padded]
+        positions = data['positions'][system_masks_padded]
+
+        n_graphs = data['ptr'].numel() - 1
+        n_residues = len(data['pair_masks']) // n_graphs
+        n_atoms = len(data['system_masks']) // n_graphs
+
+        edges = edges.reshape(n_graphs, n_residues, n_atoms).to(cell.dtype)
+        edges_sum = edges.sum(-1, keepdim=True)
+        edges = edges / edges_sum.masked_fill(edges_sum == 0, 1.0)
+        pair_masks = pair_masks.reshape(n_graphs, n_residues, n_residues)
+        node_attrs = node_attrs.reshape(n_graphs, n_atoms, node_attrs.shape[1])
+
+        _, pair_lengths = torch_tools.get_distances(
+            positions_1=positions,
+            positions_2=positions,
+            cells=cell,
+            n_graphs=n_graphs,
+            normalize=False,
+            eps=1E-7,
+        )
+        if return_lengths:
+            pair_lengths_ = pair_lengths
+        if self._radial_embedding is not None:
+            pair_lengths = self._radial_embedding(pair_lengths)
+            if self.W_b is not None:
+                pair_lengths = self.W_b(pair_lengths)
+            pair_lengths = pair_lengths.reshape(
+                (n_graphs, n_atoms, n_atoms, self._n_embedding_pair)
+            )
+        else:
+            pair_lengths = pair_lengths.reshape(
+                (n_graphs, n_atoms, n_atoms)
+            ).unsqueeze(-1)
+            pair_lengths = self.W_x(1.0 / (self._c_d + pair_lengths ** 2))
+
+        embedding_node_list = []
+        for i, embedder in enumerate(self.embedders):
+            embedding_node_list.append(embedder(node_attrs[..., i]))
+        embedding_node = torch.cat(embedding_node_list, dim=-1)
+        embedding_node = embedding_node.reshape(
+            n_graphs, n_atoms, embedding_node.shape[-1]
+        )
+
+        # NOTE: see torch_tools.get_distances:
+        # vectors = (
+        #     positions_2_.unsqueeze(1).expand(-1, s_1, -1, -1)
+        #     - positions_1_.unsqueeze(2).expand(-1, -1, s_2, -1)
+        # )  # [n_graphs, s_1, s_2, 3]
+        # vectors = vectors.flatten(-4, -2)  # [n_graphs * s_1 * s_2, 3]
+        embedding_pair = self.W_p(torch.cat(
+            [
+                embedding_node.unsqueeze(1).expand(-1, n_atoms, -1, -1),
+                embedding_node.unsqueeze(2).expand(-1, -1, n_atoms, -1),
+            ],
+            dim=-1,
+        ))
+        embedding_pair = self.W_p_1(embedding_pair * pair_lengths)
+        embedding_pair = torch.einsum(
+            'bxi,byj,bijc->bxyc', edges, edges, embedding_pair
+        )
+
+        for layer in self.layers:
+            _, embedding_pair_ = layer(
+                s=None, z=embedding_pair, pair_mask=pair_masks
+            )
+            if self._residual_update:
+                embedding_pair = embedding_pair + embedding_pair_
+            else:
+                embedding_pair = embedding_pair_
+
+        n_values = pair_masks.sum(dim=(1, 2))
+        out = (embedding_pair * pair_masks.unsqueeze(-1)).sum(dim=(1, 2))
+        out = out / n_values.unsqueeze(-1)
+
+        if self.cn_layer is not None:
+            cn = self.W_c(self.cn_layer(data))
+            out = torch.hstack([out, cn])
+
+        if return_lengths:
+            return self.W_out(out), pair_lengths_
+        else:
+            return self.W_out(out)
+
+
+class PairBiasModel(BaseModel):
+    """
+    The PairBiasAttention model used in La-Protina [1]. This implementation is
+    taken from:
+    https://github.com/NVIDIA-BioNeMo/la-proteina/blob/main/proteinfoundation/nn/modules/pair_bias_attn.py
+
+    Parameters
+    ----------
+    n_out: int
+        Size of the output node features.
+    mapping_names: Dict[str, List[str]]
+        The node embedding mapping name lists, e.g. the `mapping_names`
+        attribute of a `mlcolvar.pairformer.data.PairDataSet` instance.
+    cutoff: float
+        Cutoff radius of the basis functions. If a negative value is given,
+        will not use radial basis functions to expand distances.
+    constant_d: float
+        Constant used in distance basis: 1.0 / (constant_d + d ** 2).
+    n_bases: int
+        Size of the basis set.
+    n_layers: int
+        Number of interaction layers.
+    n_heads: int
+        Number of attention heads.
+    n_embedding_pair: int
+        Size of the pair embedding array.
+    n_hidden_channels: int
+        Size of the hidden channels in the PairBiasAttention model.
+    drop_rate: float
+        Placeholder.
+    n_polynomials: int
+        Order of the polynomials in the basis functions.
+    cn_options: Dict[str, Union[int, float]]
+        CN model options.
+    residual_update: bool
+        If apply residual update.
+    larger_w_out: bool
+        If use a larger readout network. May be useful for CN models.
+    basis_type: str
+        Type of the basis function.
+    activation: str
+        Name of the activation function (case sensitive).
+
+    References
+    ----------
+    .. [1] Geffner, Tomas, et al. "La-proteina: Atomistic protein generation
+        via partially latent flow matching." arXiv preprint arXiv:2507.09466
+        (2025).
+    """
+
+    def __init__(
+        self,
+        n_out: int,
+        mapping_names: Dict[str, List[str]],
+        cutoff: float = -1.0,
+        constant_d: float = 1.0,
+        n_bases: int = 0,
+        n_layers: int = 1,
+        n_heads: int = 1,
+        n_embedding_pair: int = 8,
+        n_hidden_channels: int = 16,
+        drop_rate: float = 0.0,
+        n_polynomials: int = 0,
+        cn_options: Optional[Dict[str, Any]] = None,
+        residual_update: bool = True,
+        larger_w_out: bool = False,
+        basis_type: str = 'gaussian',
+        activation: str = 'ShiftedSoftplus',
+    ) -> None:
+
+        if n_bases <= 0:
+            n_bases = n_embedding_pair
+
+        super().__init__(n_out, cutoff, n_bases, n_polynomials, basis_type)
+
+        n_embedders = len(mapping_names.keys())
+
+        self.embedders = torch.nn.ModuleList([])
+        for emb in pdata.dataset.__implemented_embeddings__:
+            if emb in mapping_names.keys():
+                self.embedders.append(
+                    torch.nn.Embedding(
+                        len(mapping_names[emb]), n_embedding_pair
+                    )
+                )
+
+        activation = pairformer.utils.get_activation(activation)
+
+        self.W_p = torch.nn.Linear(
+            n_embedders * n_embedding_pair, n_embedding_pair
+        )
+        if cutoff < 0:
+            self.W_x = torch.nn.Linear(1, n_bases, bias=False)
+        else:
+            self.W_x = None
+
+        self.layers = torch.nn.ModuleList([
+            pba.PairBiasAttention(
+                node_dim=n_embedding_pair,
+                dim_head=n_hidden_channels,
+                heads=n_heads,
+                bias=True,
+                qkln=True,
+                dim_out=n_embedding_pair,
+                pair_dim=n_bases,
+            ) for _ in range(n_layers)
+        ])
+
+        if cn_options is not None:
+            n_out_w_c = cn_options.pop('n_centers') * 2
+            self.cn_layer = CNModel(**cn_options)
+            self.W_c = torch.nn.Linear(n_out_w_c // 2, n_out_w_c)
+        else:
+            n_out_w_c = 0
+            self.cn_layer = None
+            self.W_c = None
+
+        n_in_w_out = n_embedding_pair + n_out_w_c
+        self.W_out = nn.Sequential(*[
+            nn.Linear(n_in_w_out, n_in_w_out // 2),
+            activation(),
+            nn.Linear(n_in_w_out // 2, n_out)
+        ]) if not larger_w_out else nn.Sequential(*[
+            nn.Linear(n_in_w_out, n_in_w_out),
+            activation(),
+            nn.Linear(n_in_w_out, n_in_w_out // 2),
+            activation(),
+            nn.Linear(n_in_w_out // 2, n_out)
+        ])
+
+        self._larger_w_out = larger_w_out
+        self._residual_update = residual_update
+        self._mapping_names = mapping_names
+        self._n_embedding_pair = n_embedding_pair
+        self._n_centers = n_out_w_c // 2
+        self._c_d = constant_d
+
+        self.reset_parameters()
+
+    def reset_parameters(self) -> None:
+
+        for m in self.layers:
+            m.reset_parameters()
+
+        nn.init.xavier_uniform_(self.W_out[0].weight)
+        self.W_out[0].bias.data.fill_(0)
+        nn.init.xavier_uniform_(self.W_out[2].weight)
+        self.W_out[2].bias.data.fill_(0)
+        nn.init.xavier_uniform_(self.W_p.weight)
+        self.W_p.bias.data.fill_(0)
+        if self._larger_w_out:
+            nn.init.xavier_uniform_(self.W_out[4].weight)
+            self.W_out[4].bias.data.fill_(0)
+        if self.W_x is not None:
+            nn.init.xavier_uniform_(self.W_x.weight)
+        if self.W_c is not None:
+            nn.init.xavier_uniform_(self.W_c.weight)
+            self.W_c.bias.data.fill_(0)
+
+    def forward(
+        self,
+        data: Dict[str, torch.Tensor],
+        scatter_mean: bool = True,
+        return_lengths: bool = False,
+    ) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
+        """
+        The forward pass.
+
+        Parameters
+        ----------
+        data: Dict[str, torch.Tensor]
+            The data dict. Usually came from the `to_dict` method of a
+            `torch_geometric.data.Batch` object.
+        scatter_mean: bool
+            If perform the scatter mean to the model output.
+        return_lengths: bool
+            If return distances for gradient calculations.
+        """
+
+        cell = data['cell']
+        pair_masks = data['pair_masks']
+        system_masks_padded = data['system_masks_padded'].flatten()
+        node_attrs = data['node_attrs'][system_masks_padded]
+        positions = data['positions'][system_masks_padded]
+
+        n_graphs = data['ptr'].numel() - 1
+        n_atoms = len(data['pair_masks']) // n_graphs
+
+        pair_masks = pair_masks.reshape(n_graphs, n_atoms, n_atoms)
+        node_attrs = node_attrs.reshape(n_graphs, n_atoms, node_attrs.shape[1])
+
+        _, pair_lengths = torch_tools.get_distances(
+            positions_1=positions,
+            positions_2=positions,
+            cells=cell,
+            n_graphs=n_graphs,
+            normalize=False,
+            eps=1E-7,
+        )
+        if return_lengths:
+            pair_lengths_ = pair_lengths
+        if self._radial_embedding is not None:
+            pair_lengths = self._radial_embedding(pair_lengths)
+            pair_lengths = pair_lengths.reshape(
+                (n_graphs, n_atoms, n_atoms, self._radial_embedding.n_out)
+            )
+        else:
+            pair_lengths = pair_lengths.reshape(
+                (n_graphs, n_atoms, n_atoms)
+            ).unsqueeze(-1)
+            pair_lengths = self.W_x(1.0 / (self._c_d + pair_lengths ** 2))
+
+        # node embeddings
+        embedding_node_list = []
+        for i, embedder in enumerate(self.embedders):
+            embedding_node_list.append(embedder(node_attrs[..., i]))
+        embedding_node = torch.cat(embedding_node_list, dim=-1)
+        embedding_node = embedding_node.reshape(
+            n_graphs, n_atoms, embedding_node.shape[-1]
+        )
+        embedding_node = self.W_p(embedding_node)
+
+        # other layers: distance + node type
+        for layer in self.layers:
+            embedding_node_ = layer(
+                embedding_node, pair_lengths, mask=pair_masks.bool()
+            )
+            if self._residual_update:
+                embedding_node = embedding_node + embedding_node_
+            else:
+                embedding_node = embedding_node_
+
+        pair_masks = pair_masks[..., [0]]
+        n_values = pair_masks.sum(dim=(1, 2))
+        out = (embedding_node * pair_masks).sum(dim=1)
+        out = out / n_values.unsqueeze(-1)
+
+        if self.cn_layer is not None:
+            cn = self.W_c(self.cn_layer(data))
+            out = torch.hstack([out, cn])
+
+        if return_lengths:
+            return self.W_out(out), pair_lengths_
+        else:
+            return self.W_out(out)
+
+
 class CNModel(nn.Module):
     """
     A trival coordination number calculator.
@@ -456,22 +1027,57 @@ class CNModel(nn.Module):
     Parameters
     ----------
     n: int
-        The n parameter of the switching function.
+        The n parameter of the rational switching function,
+        denominator of the Fermi width m / n.
     m: int
-        The m parameter of the switching function.
+        The m parameter of the rational switching function,
+        numerator of the Fermi width m / n.
     r_0: float
-        The r_0 parameter of the switching function.
+        The r_0 parameter of the both switching function,
     d_0: float
-        The d_0 parameter of the switching function.
+        The d_0 parameter of the both switching functions.
     d_max: float
         The d_max parameter of the switching function.
+    switching_function: str
+        Type of the switching function.
+    cutoff_start: float
+        Start of the Fermi cutoff envelope.
     """
 
     def __init__(
-        self, n: int, m: int, r_0: float, d_0: float, d_max: float,
+        self,
+        n: int,
+        m: int,
+        r_0: float,
+        d_0: float,
+        d_max: float,
+        switching_function: str = 'rational',
+        cutoff_start: float = 0.8,
     ) -> None:
 
         super().__init__()
+
+        assert switching_function in ['rational', 'fermi'], (
+            'The switching function parameter could only be rational or fermi!'
+        )
+
+        if switching_function == 'rational':
+            assert m > n, 'For rational switch, m should be larger than n!'
+        elif switching_function == 'fermi':
+            if any(
+                not np.isfinite(p) or p <= 0 or int(p) != p for p in (n, m)
+            ):
+                raise ValueError('Fermi n and m must be positive integers!')
+            if not all(np.isfinite(p) for p in (r_0, d_0, d_max, r_0 + d_0)):
+                raise ValueError('Fermi distance parameters must be finite!')
+            if r_0 + d_0 <= 0:
+                raise ValueError('Fermi midpoint r_0 + d_0 must be positive!')
+            if d_max <= 0:
+                raise ValueError('Fermi d_max must be positive!')
+            if not np.isfinite(cutoff_start) or not 0 < cutoff_start < 1:
+                raise ValueError(
+                    'For Fermi switch, require 0 < cutoff_start < 1!'
+                )
 
         self.register_buffer(
             'n', torch.tensor(n, dtype=torch.long)
@@ -488,6 +1094,16 @@ class CNModel(nn.Module):
         self.register_buffer(
             'd_max', torch.tensor(d_max, dtype=torch.get_default_dtype())
         )
+
+        if switching_function == 'fermi':
+
+            self.register_buffer(
+                'cutoff_start',
+                torch.tensor(cutoff_start, dtype=torch.get_default_dtype()),
+            )
+            self.cutoff_fn = radial.PolynomialCutoff(cutoff=1.0, p=3).double()
+
+        self._switching_function = switching_function
 
     def forward(self, data: Dict[str, torch.Tensor]) -> torch.Tensor:
         """
@@ -521,28 +1137,54 @@ class CNModel(nn.Module):
         )
 
         # distances
-        _, lengths = torch_tools.get_distances(
+        vectors, lengths = torch_tools.get_distances(
             positions_1=data['positions'][system_masks_padded],
             positions_2=positions_center,
             cells=cell,
             n_graphs=n_graphs,
             eps=1E-7,
+            normalize=self._switching_function != 'fermi',
         )
 
         # decay
         lengths = lengths.flatten()
         distance_masks = lengths > self.d_max
-        c = (lengths - self.d_0) / (self.r_0)
-        lengths = torch.div(
-            (1 - torch.pow(c, self.n) + 1E-12),
-            (1 - torch.pow(c, self.m) + 2E-12),
-        )
-        c = (self.d_max - self.d_0) / (self.r_0)
-        lengths_max = torch.div(
-            (1 - torch.pow(c, self.n) + 1E-12),
-            (1 - torch.pow(c, self.m) + 2E-12),
-        )
-        lengths = torch.div((lengths - lengths_max), (1 - lengths_max))
+
+        if self._switching_function == 'rational':
+
+            plateau_masks = lengths <= self.d_0
+            c = ((lengths - self.d_0) / (self.r_0)).to(torch.double)
+            c = c.clamp(min=0)
+            lengths = torch.div(
+                (1 - torch.pow(c, self.n) + 1E-12),
+                (1 - torch.pow(c, self.m) + (self.m / self.n) * 1E-12),
+            )
+            c = ((self.d_max - self.d_0) / (self.r_0)).to(torch.double)
+            lengths_max = torch.div(
+                (1 - torch.pow(c, self.n) + 1E-12),
+                (1 - torch.pow(c, self.m) + (self.m / self.n) * 1E-12),
+            )
+
+            lengths = torch.div((lengths - lengths_max), (1 - lengths_max))
+            lengths[plateau_masks] = 1.0
+
+        elif self._switching_function == 'fermi':
+
+            d = lengths.to(torch.double)
+            q = self.m.to(torch.double) / self.n.to(torch.double)
+            m = self.r_0.to(torch.double) + self.d_0.to(torch.double)
+            d_max = self.d_max.to(torch.double)
+            d_max_start = self.cutoff_start.to(torch.double) * d_max
+
+            # for 2nd gradients we use vectors
+            d_2 = vectors.to(torch.double).square().sum(dim=-1)
+            lengths = torch.sigmoid((m.square() - d_2) / (2 * m * q))
+
+            # smooth
+            progress = ((d - d_max_start) / (d_max - d_max_start))
+            lengths = lengths * self.cutoff_fn(progress.clamp(min=0, max=1))
+
+        lengths = lengths.to(torch.get_default_dtype())
 
         # filter padding atoms/atoms beyond d_max
         lengths = lengths * environment_masks_repeat
@@ -651,6 +1293,103 @@ def test_get_data(c: bool = False) -> Tuple[tg.data.Batch, Dict[str, Any]]:
     return next(iter(loader.train_dataloader())), dataset.mapping_names
 
 
+def test_get_data_rl(c: bool = False) -> Tuple[tg.data.Batch, Dict[str, Any]]:
+    # TODO: This is not a real test, but a helper function for other tests.
+    # Maybe should change its name.
+    torch.manual_seed(0)
+    torch_tools.set_default_dtype('float64')
+
+    positions = np.array(
+        [
+            [[0.0, 0.0, 0.0], [0.07, 0.07, 0.0], [0.07, -0.07, 0.0]],
+            [[0.0, 0.0, 0.0], [-0.07, 0.07, 0.0], [0.07, 0.07, 0.0]],
+            [[0.0, 0.0, 0.0], [0.07, -0.07, 0.0], [0.07, 0.07, 0.0]],
+            [[0.0, 0.0, 0.0], [0.0, -0.07, 0.07], [0.0, 0.07, 0.07]],
+            [[0.0, 0.0, 0.0], [0.07, 0.0, 0.07], [-0.07, 0.0, 0.07]],
+            [[0.1, 0.0, 1.1], [0.17, 0.07, 1.1], [0.17, -0.07, 1.1]],
+        ],
+        dtype=np.float64
+    )
+    cell = np.identity(3, dtype=float) * 0.2
+    graph_labels = np.array([[1]])
+    atom_names = ['O', 'H', 'H']
+    residue_names = ['H2O'] * 3
+    if not c:
+        config = [
+            pdata.atomic.Configuration(
+                positions=p,
+                cell=cell,
+                pbc=[True] * 3,
+                graph_labels=graph_labels,
+                node_labels=None,
+                node_attrs={
+                    'atom_names': atom_names, 'residue_names': residue_names
+                },
+                chain_id=[0, 0, 0],
+                resseq=[0, 1, 2],
+            ) for p in positions
+        ]
+        dataset = pdata.create_dataset_from_configurations(
+            config,
+            mapping_tables={
+                'atom_names': pdata.atomic.GenericMappingTable.from_names(
+                    atom_names
+                ),
+                'residue_names': pdata.atomic.GenericMappingTable.from_names(
+                    residue_names
+                )
+            },
+            n_atoms_padded=3,
+            show_progress=False,
+            n_residues_padded=5,
+        )
+    else:
+        config = [
+            pdata.atomic.Configuration(
+                positions=p,
+                cell=cell,
+                pbc=[True] * 3,
+                graph_labels=graph_labels,
+                node_labels=None,
+                node_attrs={
+                    'atom_names': atom_names, 'residue_names': residue_names
+                },
+                system=np.array([0, 1]),
+                environment=np.array([2]),
+                centers=np.array([[0]]),
+                chain_id=[0, 0],
+                resseq=[0, 1],
+            ) for p in positions
+        ]
+        dataset = pdata.create_dataset_from_configurations(
+            config,
+            mapping_tables={
+                'atom_names': pdata.atomic.GenericMappingTable.from_names(
+                    atom_names
+                ),
+                'residue_names': pdata.atomic.GenericMappingTable.from_names(
+                    residue_names
+                )
+            },
+            cutoff=0.1,
+            n_atoms_padded=2,
+            show_progress=False,
+            n_atoms_padded_environment=1,
+            n_residues_padded=2,
+        )
+
+    loader = pdata.PairDataModule(
+        dataset,
+        lengths=(1.0,),
+        batch_size=10,
+        shuffle=False,
+        random_split=False,
+    )
+    loader.setup()
+
+    return next(iter(loader.train_dataloader())), dataset.mapping_names
+
+
 def test_pairformer() -> None:
     torch.manual_seed(0)
     torch_tools.set_default_dtype('float64')
@@ -662,7 +1401,7 @@ def test_pairformer() -> None:
     assert (
         torch.abs(
             model(data) -
-            torch.tensor([[0.771122634223133, -0.2714238083585388]] * 6)
+            torch.tensor([[0.7711226014051036, -0.27142382184731073]] * 6)
         ) < 1E-12
     ).all()
 
@@ -670,7 +1409,7 @@ def test_pairformer() -> None:
     assert (
         torch.abs(
             model(data) -
-            torch.tensor([[0.7699681542284031, -0.27189165318942404]] * 6)
+            torch.tensor([[0.7699681216384463, -0.2718916665154214]] * 6)
         ) < 1E-12
     ).all()
 
@@ -678,7 +1417,20 @@ def test_pairformer() -> None:
     assert (
         torch.abs(
             model(data) -
-            torch.tensor([[-0.1672441388337443, 0.20963137884834385]] * 6)
+            torch.tensor([[-0.16724364344631681, 0.2096320595165789]] * 6)
+        ) < 1E-12
+    ).all()
+
+    model = PairFormerModel(
+        2,
+        mapping_names,
+        n_bases=6,
+        cutoff=1.0,
+    )
+    assert (
+        torch.abs(
+            model(data) -
+            torch.tensor([[0.6979908864723334, 0.032536874511407674]] * 6)
         ) < 1E-12
     ).all()
 
@@ -699,7 +1451,104 @@ def test_pairformer() -> None:
     assert (
         torch.abs(
             model(data) -
-            torch.tensor([[-0.05064218647162956, 0.49252906877217784]] * 6)
+            torch.tensor([[-0.05064023701297078, 0.49252677377552584]] * 6)
+        ) < 1E-12
+    ).all()
+
+
+def test_pairformer_rl() -> None:
+    torch.manual_seed(0)
+    torch_tools.set_default_dtype('float64')
+
+    data, mapping_names = test_get_data_rl()
+
+    model = PairFormerRLModel(2, mapping_names)
+
+    assert (
+        torch.abs(
+            model(data) -
+            torch.tensor([[0.13047949206007192, -0.29003073278007635]] * 6)
+        ) < 1E-12
+    ).all()
+
+    data['cell'] = torch.zeros((6, 1), dtype=float)
+    assert (
+        torch.abs(
+            model(data) -
+            torch.tensor([[0.13127018415850578, -0.28775644642181225]] * 6)
+        ) < 1E-12
+    ).all()
+
+    model = PairFormerRLModel(2, mapping_names, n_layers=2)
+    assert (
+        torch.abs(
+            model(data) -
+            torch.tensor([[0.8380119155180464, -0.9252425235108984]] * 6)
+        ) < 1E-12
+    ).all()
+
+    model = PairFormerRLModel(
+        2,
+        mapping_names,
+        n_bases=6,
+        cutoff=1.0,
+    )
+    assert (
+        torch.abs(
+            model(data) -
+            torch.tensor([[0.30854580023660816, 1.1423452868306794]] * 6)
+        ) < 1E-12
+    ).all()
+
+    data, mapping_names = test_get_data_rl(True)
+
+    model = PairFormerRLModel(
+        2,
+        mapping_names,
+        cn_options={
+            'n': 6,
+            'm': 12,
+            'r_0': 0.09,
+            'd_0': 0,
+            'd_max': 0.1,
+            'n_centers': 1,
+        },
+    )
+
+    assert (
+        torch.abs(
+            model(data) -
+            torch.tensor([[-0.3064526038615088, 0.5897259064072653]] * 6)
+        ) < 1E-12
+    ).all()
+
+    data['cell'] = torch.zeros((6, 1), dtype=float)
+
+    assert (
+        torch.abs(
+            model(data) -
+            torch.tensor([[-0.3064526038615088, 0.5897259064072653]] * 6)
+        ) < 1E-12
+    ).all()
+
+    model = PairFormerRLModel(
+        2,
+        mapping_names,
+        n_bases=6,
+        cutoff=1.0,
+        cn_options={
+            'n': 6,
+            'm': 12,
+            'r_0': 0.09,
+            'd_0': 0,
+            'd_max': 0.1,
+            'n_centers': 1,
+        },
+    )
+    assert (
+        torch.abs(
+            model(data) -
+            torch.tensor([[1.5939328373721644, 2.594910549851418]] * 6)
         ) < 1E-12
     ).all()
 
@@ -714,11 +1563,67 @@ def test_cn() -> None:
     assert (
         torch.abs(
             model(data) -
-            torch.tensor([[0.042448066282396]] * 6)
+            torch.tensor([[0.04242341321389491]] * 6)
+        ) < 1E-12
+    ).all()
+
+    model = CNModel(6, 12, 0.09, 0.0, 0.1, switching_function='fermi')
+
+    assert (
+        torch.abs(
+            model(data) -
+            torch.tensor([[0.001170804271369301]] * 6)
+        ) < 1E-12
+    ).all()
+
+    data['positions'] = data['positions'].detach().clone().requires_grad_(True)
+    for n, m in ((2, 6), (6, 12)):
+        model = CNModel(n, m, 0.09, 0.11, 0.2)
+        result = model(data)
+        assert torch.equal(result, torch.full_like(result, 2.0))
+        gradients = torch.autograd.grad(
+            result.sum(), data['positions'], create_graph=True
+        )[0]
+        assert torch.equal(gradients, torch.zeros_like(gradients))
+        second_gradients = torch.autograd.grad(
+            gradients.sum(), data['positions']
+        )[0]
+        assert torch.equal(
+            second_gradients, torch.zeros_like(second_gradients)
+        )
+
+
+def test_pairbias() -> None:
+    torch.manual_seed(0)
+    torch_tools.set_default_dtype('float64')
+
+    data, mapping_names = test_get_data()
+
+    model = PairBiasModel(2, mapping_names, residual_update=False)
+
+    assert (
+        torch.abs(
+            model(data) -
+            torch.tensor([[-0.007625490792708173, 0.05461031470587694]] * 6)
+        ) < 1E-12
+    ).all()
+
+    model = PairBiasModel(
+        2,
+        mapping_names,
+        n_bases=6,
+        cutoff=1.0,
+    )
+    assert (
+        torch.abs(
+            model(data) -
+            torch.tensor([[1.5224833706138903, -1.75608038775696]] * 6)
         ) < 1E-12
     ).all()
 
 
 if __name__ == '__main__':
     test_pairformer()
+    test_pairformer_rl()
+    test_pairbias()
     test_cn()

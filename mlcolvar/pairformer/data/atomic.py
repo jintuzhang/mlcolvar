@@ -75,6 +75,8 @@ class Configuration:
     node_labels: Optional[np.ndarray]   # shape: [n_atoms, n_node_labels]
     graph_labels: Optional[np.ndarray]  # shape: [n_graph_labels, 1]
     weight: Optional[float] = 1.0       # shape: []
+    resseq: Optional[List[int]] = None          # shape: [n_atoms]
+    chain_id: Optional[List[str]] = None        # shape: [n_atoms]
     system: Optional[np.ndarray] = None         # shape: [n_system_atoms]
     environment: Optional[np.ndarray] = None    # shape: [n_environment_atoms]
     centers: Optional[List[np.ndarray]] = None  # shape: [n_centers, *]

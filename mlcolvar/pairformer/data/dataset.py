@@ -1,4 +1,5 @@
 import copy
+import collections
 import torch
 import torch_geometric as tg
 import numpy as np
@@ -139,6 +140,7 @@ def _create_dataset_from_configuration(
     n_atoms_padded: int,
     cutoff: float = -1.0,
     n_atoms_padded_environment: int = 0,
+    n_residues_padded: int = 0,
 ) -> tg.data.Data:
     """
     Build the Pairformer data object from a configuration.
@@ -155,6 +157,8 @@ def _create_dataset_from_configuration(
         The cutoff radius for truncating the system.
     n_atoms_padded: int
         Number of environment nodes after padding.
+    n_residues_padded: int
+        Number of residues after padding.
     """
 
     assert config.graph_labels is None or len(config.graph_labels.shape) == 2
@@ -188,8 +192,9 @@ def _create_dataset_from_configuration(
                 f'Not all atoms in center group {i} are system atoms!'
             )
 
+        n_center_atoms_padded = max([len(c) for c in config.centers])
         centers = -torch.ones(
-            (1, len(config.centers), n_atoms_padded), dtype=torch.long
+            (1, len(config.centers), n_center_atoms_padded), dtype=torch.long
         )
         for i, c in enumerate(config.centers):
             centers[0, i, :len(c)] = torch.tensor(c, dtype=torch.long)
@@ -252,6 +257,7 @@ def _create_dataset_from_configuration(
         cell = torch.zeros((1, 1), dtype=torch.get_default_dtype())
 
     node_attrs_list = []
+    node_attrs_list_e = []
     if 'atom_names' in mapping_tables.keys():
         table = mapping_tables['atom_names']
         atom_names = config.node_attrs.get('atom_names', None)
@@ -259,12 +265,19 @@ def _create_dataset_from_configuration(
             raise AttributeError(
                 'Can not read the `atom_names` list from configuration!'
             )
+        if len(neighbors) > 0:
+            atom_names_e = [atom_names[i] for i in neighbors]
         if config.system is not None:
             atom_names = [atom_names[i] for i in config.system]
         atomic_numbers = table.names_to_indices(atom_names)
         node_attrs_list.append(
             torch.tensor(atomic_numbers, dtype=torch.long).unsqueeze(-1)
         )
+        if len(neighbors) > 0:
+            atomic_numbers_e = table.names_to_indices(atom_names_e)
+            node_attrs_list_e.append(
+                torch.tensor(atomic_numbers_e, dtype=torch.long).unsqueeze(-1)
+            )
     else:
         raise AttributeError(
             'Can not find the `atom_names` embedding, which is always '
@@ -277,12 +290,19 @@ def _create_dataset_from_configuration(
             raise AttributeError(
                 'Can not read the `residue_name` list from configuration!'
             )
+        if len(neighbors) > 0:
+            residue_names_e = [residue_names[i] for i in neighbors]
         if config.system is not None:
             residue_names = [residue_names[i] for i in config.system]
         residue_indices = table.names_to_indices(residue_names)
         node_attrs_list.append(
             torch.tensor(residue_indices, dtype=torch.long).unsqueeze(-1)
         )
+        if len(neighbors) > 0:
+            residue_indices_e = table.names_to_indices(residue_names_e)
+            node_attrs_list_e.append(
+                torch.tensor(residue_indices_e, dtype=torch.long).unsqueeze(-1)
+            )
 
     node_attrs = torch.zeros(
         (
@@ -292,6 +312,10 @@ def _create_dataset_from_configuration(
         dtype=torch.long,
     )
     node_attrs[:len(node_attrs_list[0]), :] = torch.hstack(node_attrs_list)
+    if len(neighbors) > 0:
+        node_attrs[
+            n_atoms_padded:(n_atoms_padded + len(node_attrs_list_e[0])), :
+        ] = torch.hstack(node_attrs_list_e)
 
     graph_labels = (
         torch.tensor(config.graph_labels, dtype=torch.get_default_dtype())
@@ -304,11 +328,6 @@ def _create_dataset_from_configuration(
         if config.weight is not None
         else 1
     )
-
-    pair_masks = torch.zeros(
-        (n_atoms_padded, n_atoms_padded), dtype=torch.long
-    )
-    pair_masks[:len(positions_system), :len(positions_system)] = 1
 
     n_system = torch.tensor(
         [[positions_system.shape[0]]], dtype=torch.get_default_dtype()
@@ -331,6 +350,53 @@ def _create_dataset_from_configuration(
         (n_atoms_padded_environment, 1), dtype=torch.bool
     )
     environment_masks[:len(neighbors), 0] = 1
+
+    if n_residues_padded > 0:
+        assert config.chain_id is not None, (
+            'The residue level representation requires chain id!'
+        )
+        assert config.resseq is not None, (
+            'The residue level representation requires residue id!'
+        )
+        residue_id = [(i, j) for i, j in zip(config.chain_id, config.resseq)]
+        assert len(residue_id) == len(positions_system), (
+            'Number of residue ids {:d} does not '.format(len(residue_id))
+            + 'equal to that of system atoms {:d}!'.format(len(positions_system))
+        )
+        counter = collections.Counter(residue_id)
+        assert len(counter) <= n_residues_padded, (
+            'Number of residues {:d} is larger than the padding size {:d}'
+            .format(len(counter), n_residues_padded)
+        )
+
+        counter = list(counter.keys())
+        residue_adjacency = torch.zeros(
+            (n_residues_padded, n_atoms_padded), dtype=torch.long
+        )
+        for i, idx in enumerate(residue_id):
+            residue_adjacency[counter.index(idx), i] = 1
+        pair_masks = torch.zeros(
+            (n_residues_padded, n_residues_padded), dtype=torch.long
+        )
+        pair_masks[:len(counter), :len(counter)] = 1
+
+        # NOTE: you may ask: what is the use of this extra mask?
+        # There is no direct use! However, it provides the correct size of the
+        # system atoms. If we use `residue_adjacency.shape[0]`, Torch v2.9
+        # will not understand the shape dependency, and will generate the
+        # following stupid error:
+        # error: use of undeclared identifier 's75'
+        # if (!(u0 == s75)) { throw std::runtime_error("..."); }
+        #             ^
+        system_masks = torch.zeros((n_atoms_padded, 1), dtype=bool)
+        system_masks[:len(positions_system), :] = 1
+    else:
+        system_masks = None
+        residue_adjacency = None
+        pair_masks = torch.zeros(
+            (n_atoms_padded, n_atoms_padded), dtype=torch.long
+        )
+        pair_masks[:len(positions_system), :len(positions_system)] = 1
 
     return tg.data.Data(
         # [n_atoms_padded + n_atoms_padded_environment, 3]
@@ -359,6 +425,10 @@ def _create_dataset_from_configuration(
         n_environment_padded=n_environment_padded,
         # [n_atoms_padded_environment, 1]
         environment_masks=environment_masks,
+        # [n_residues_padded, n_atoms_padded]
+        residue_adjacency=residue_adjacency,
+        # [n_atoms_padded, 1]
+        system_masks=system_masks,
     )
 
 
@@ -368,6 +438,7 @@ def create_dataset_from_configurations(
     cutoff: float = -1.0,
     n_atoms_padded: int = 0,
     n_atoms_padded_environment: int = 0,
+    n_residues_padded: int = 0,
     show_progress: bool = True
 ) -> PairDataSet:
     """
@@ -385,6 +456,8 @@ def create_dataset_from_configurations(
         Number of system nodes after padding.
     n_atoms_padded: int
         Number of environment nodes after padding.
+    n_residues_padded: int
+        Number of residues after padding.
     show_progress: bool
         If show the progress bar.
     """
@@ -400,6 +473,7 @@ def create_dataset_from_configurations(
             n_atoms_padded,
             cutoff,
             n_atoms_padded_environment,
+            n_residues_padded,
         ) for c in items
     ]
 
@@ -695,6 +769,53 @@ def test_from_configurations() -> None:
             dataset[i]['environment_masks'] == torch.tensor(
                 [[True], [False]]
             )
+        ).all()
+
+    config = [atomic.Configuration(
+        positions=positions,
+        cell=cell,
+        pbc=[True] * 3,
+        graph_labels=np.array([[i]]),
+        node_labels=None,
+        node_attrs={
+            'atom_names': atom_names, 'residue_names': residue_names[i]
+        },
+        system=np.array([0, 1]),
+        environment=np.array([2]),
+        centers=np.array([[1]]),
+        chain_id=[0, 0],
+        resseq=[0, 1],
+    ) for i in range(0, 10)]
+    dataset = create_dataset_from_configurations(
+        config,
+        mapping_tables={
+            'atom_names': atomic.GenericMappingTable.from_names(
+                atom_names
+            ),
+            'residue_names': atomic.GenericMappingTable.from_names(
+                ['H2O', 'H3O']
+            ),
+        },
+        cutoff=0.1,
+        n_atoms_padded=3,
+        show_progress=False,
+        n_atoms_padded_environment=2,
+        n_residues_padded=5,
+    )
+    for i in range(10):
+        assert (
+            dataset[i].residue_adjacency == torch.tensor([
+                [1, 0, 0], [0, 1, 0], [0, 0, 0], [0, 0, 0], [0, 0, 0]
+            ])
+        ).all()
+        assert (
+            dataset[i].pair_masks == torch.tensor([
+                [1, 1, 0, 0, 0],
+                [1, 1, 0, 0, 0],
+                [0, 0, 0, 0, 0],
+                [0, 0, 0, 0, 0],
+                [0, 0, 0, 0, 0],
+            ])
         ).all()
 
 

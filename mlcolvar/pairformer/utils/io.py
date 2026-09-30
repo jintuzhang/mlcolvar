@@ -30,6 +30,7 @@ def create_dataset_from_trajectories(
     center_selections: List[str] = [],
     n_atoms_padded: int = 0,
     n_atoms_padded_environment: int = 0,
+    n_residues_padded: int = 0,
     return_trajectories: bool = False,
     no_pbc: bool = False,
     show_progress: bool = True,
@@ -76,6 +77,8 @@ def create_dataset_from_trajectories(
         Number of nodes after padding.
     n_atoms_padded_environment: int
         Number of environment nodes after padding.
+    n_residues_padded: int
+        Number of residues after padding.
     return_trajectories: bool
         If also return the loaded trajectory objects.
     no_pbc: bool
@@ -277,6 +280,7 @@ def create_dataset_from_trajectories(
                         cutoff,
                         n_atoms_padded,
                         n_atoms_padded_environment,
+                        n_residues_padded,
                         show_progress,
                     )
                     for i in indices
@@ -305,6 +309,7 @@ def create_dataset_from_trajectories(
             cutoff,
             n_atoms_padded,
             n_atoms_padded_environment,
+            n_residues_padded,
             show_progress,
         )
 
@@ -312,6 +317,39 @@ def create_dataset_from_trajectories(
         return dataset, trajectories_in_memory
     else:
         return dataset
+
+
+def get_masses_from_trajectories(
+    names: List[str],
+    trajectories: Union[List[List[md.Trajectory]], List[md.Trajectory]]
+) -> List[float]:
+    """
+    Get atomic masses from FF-based atomic names.
+
+    Parameters
+    ----------
+    names: List[str]
+        The atomic names.
+    trajectories: Union[List[List[md.Trajectory]], List[md.Trajectory]]
+        Trajectories returned by the `create_dataset_from_trajectories` method.
+    """
+    masses = []
+    topologies: List[md.Topology] = []
+
+    for i in range(len(trajectories)):
+        if isinstance(trajectories[i], list):
+            for j in range(len(trajectories[i])):
+                topologies.append(trajectories[i][j].top)
+        else:
+            topologies.append(trajectories[i].top)
+    atoms = [a for t in topologies for a in t.atoms]
+    for name in names:
+        for atom in atoms:
+            if name == atom.name:
+                masses.append(atom.element.mass)
+                break
+
+    return masses
 
 
 def _z_table_from_top(
@@ -457,6 +495,19 @@ def _configures_from_trajectory(
         residue_names = [a.residue.name for a in trajectory.top.atoms]
         node_attrs['residue_names'] = residue_names
 
+    if system_atoms is not None:
+        resseq = [
+            trajectory.top._atoms[i].residue.resSeq
+            for i in system_atoms
+        ]
+        chain_id = [
+            trajectory.top._atoms[i].residue.chain.chain_id
+            for i in system_atoms
+        ]
+    else:
+        resseq = [a.residue.resSeq for a in trajectory.top.atoms]
+        chain_id = [a.residue.chain.chain_id for a in trajectory.top.atoms]
+
     configurations = []
     for i in range(len(trajectory)):
         configuration = pdata.atomic.Configuration(
@@ -469,6 +520,8 @@ def _configures_from_trajectory(
             environment=environment_atoms,
             centers=center_atoms_list,
             node_attrs=node_attrs,
+            chain_id=chain_id,
+            resseq=resseq,
         )
         configurations.append(configuration)
 
@@ -573,7 +626,7 @@ def test_create_dataset_from_trajectories(
         else:
             assert (
                 data['node_attrs'] == torch.tensor([
-                    [2.0, 0.0], [0.0, 0.0], [0.0, 0.0]
+                    [2.0, 0.0], [0.0, 0.0], [1.0, 0.0]
                 ])
             ).all()
 

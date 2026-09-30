@@ -910,10 +910,37 @@ def create_local_attn_bias(
     return attn_bias.to(device=device)[:n, :n]
 
 
+def get_activation(activation: str) -> torch.nn.Module:
+    utils = __import__('mlcolvar').pairformer.core.nn.pairformer.utils
+    if hasattr(utils, activation):
+        return eval(f'utils.{activation}')
+    elif hasattr(torch.nn, activation):
+        return eval(f'torch.nn.{activation}')
+    else:
+        raise RuntimeError(f'Unknown activation function: {activation}')
+
+
 class ShiftedSoftplus(torch.nn.Module):
     def __init__(self) -> None:
         super().__init__()
         self.shift = torch.log(torch.tensor(2.0)).item()
 
+    def __repr__(self) -> str:
+        result = 'ShiftedSoftplus(shift=2.0)'
+        return result
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return torch.nn.functional.softplus(x) - self.shift
+
+
+class Squareplus(torch.nn.Module):
+    def __init__(self, b: float = 0.2) -> None:
+        super().__init__()
+        self.b = torch.tensor(b).item()
+
+    def __repr__(self) -> str:
+        result = 'ShiftedSoftplus(b={:f})'.format(float(self.b))
+        return result
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return 0.5 * (x + torch.sqrt(x ** 2 + self.b))

@@ -137,14 +137,14 @@ def pair_sensitivity(
         device_org = None
 
     gradients, pair_lengths = get_dataset_cv_gradients_pair(
-        model,
-        dataset,
-        component,
-        device,
-        batch_size,
-        True,
-        show_progress,
-        'Getting gradients'
+        model=model,
+        dataset=dataset,
+        component=component,
+        device=device,
+        batch_size=batch_size,
+        show_progress=show_progress,
+        return_lengths=True,
+        progress_prefix='Getting gradients',
     )
     sensitivities_components = gradients
     weights = np.array([d['weight'].item() for d in dataset])
